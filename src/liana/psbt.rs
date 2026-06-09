@@ -54,10 +54,7 @@ pub fn match_psbt(
                 let witness_script = def
                     .explicit_script()
                     .map_err(|e| super::Error::Match(format!("explicit script: {e}")))?;
-                candidates
-                    .entry(def.script_pubkey())
-                    .or_default()
-                    .insert(witness_script);
+                candidates.entry(def.script_pubkey()).or_default().insert(witness_script);
             }
         }
     }
@@ -131,9 +128,7 @@ pub fn match_psbt(
     let (active_path, active_timelock_blocks) = match first_path {
         Some(n) => {
             if psbt.unsigned_tx.version.0 < 2 {
-                reasons.push(
-                    "recovery spends require transaction version 2 or higher for BIP68".into(),
-                );
+                reasons.push("recovery spends require transaction version 2 or higher for BIP68".into());
                 return Ok(MatchResult {
                     matched: true,
                     active_path: None,
@@ -154,11 +149,8 @@ pub fn match_psbt(
     // Passport must own a key on a path that is spendable *right now* — the
     // primary path always, plus any recovery tier the nSequence has unlocked. A
     // key on a not-yet-matured tier cannot sign.
-    let passport_in_psbt = psbt.inputs.iter().any(|inp| {
-        inp.bip32_derivation
-            .values()
-            .any(|(fp, _)| *fp == passport_fp)
-    });
+    let passport_in_psbt =
+        psbt.inputs.iter().any(|inp| inp.bip32_derivation.values().any(|(fp, _)| *fp == passport_fp));
     let fp_str = passport_fp.to_string();
     let owns_active_key = policy.paths.iter().any(|p| {
         let active = match (active_path, p.kind) {
@@ -172,10 +164,8 @@ pub fn match_psbt(
     });
     let passport_can_sign = passport_in_psbt && owns_active_key;
     if !passport_can_sign {
-        reasons.push(
-            "Passport key is not on a currently-spendable path (or not referenced by the PSBT)"
-                .into(),
-        );
+        reasons
+            .push("Passport key is not on a currently-spendable path (or not referenced by the PSBT)".into());
     }
 
     Ok(MatchResult {
@@ -243,9 +233,7 @@ fn validate_psbt_safety(
     for (i, input) in psbt.inputs.iter().enumerate() {
         validate_sighash(i, input)?;
         if input.redeem_script.is_some() {
-            return Err(format!(
-                "input {i}: redeem_script is not supported for native P2WSH policies"
-            ));
+            return Err(format!("input {i}: redeem_script is not supported for native P2WSH policies"));
         }
         let utxo = input
             .witness_utxo
@@ -259,14 +247,11 @@ fn validate_psbt_safety(
             .as_ref()
             .ok_or_else(|| format!("input {i}: missing witness_script for P2WSH spend"))?;
         if !allowed_scripts.contains(witness_script) {
-            return Err(format!(
-                "input {i}: witness_script does not match the registered policy"
-            ));
+            return Err(format!("input {i}: witness_script does not match the registered policy"));
         }
         validate_non_witness_utxo(i, psbt, input, utxo)?;
-        input_sum = input_sum
-            .checked_add(utxo.value.to_sat())
-            .ok_or_else(|| "input amount overflow".to_string())?;
+        input_sum =
+            input_sum.checked_add(utxo.value.to_sat()).ok_or_else(|| "input amount overflow".to_string())?;
     }
 
     let mut output_sum = 0u64;
@@ -284,13 +269,9 @@ fn validate_psbt_safety(
 }
 
 fn validate_sighash(i: usize, input: &psbt::Input) -> std::result::Result<(), String> {
-    let sighash = input
-        .ecdsa_hash_ty()
-        .map_err(|e| format!("input {i}: non-standard sighash type: {e}"))?;
+    let sighash = input.ecdsa_hash_ty().map_err(|e| format!("input {i}: non-standard sighash type: {e}"))?;
     if sighash != EcdsaSighashType::All {
-        return Err(format!(
-            "input {i}: unsupported sighash type {sighash}; only SIGHASH_ALL is allowed"
-        ));
+        return Err(format!("input {i}: unsupported sighash type {sighash}; only SIGHASH_ALL is allowed"));
     }
     Ok(())
 }
@@ -309,18 +290,14 @@ fn validate_non_witness_utxo(
     };
     let prevout = txin.previous_output;
     if prev_tx.compute_txid() != prevout.txid {
-        return Err(format!(
-            "input {i}: non_witness_utxo txid does not match prevout"
-        ));
+        return Err(format!("input {i}: non_witness_utxo txid does not match prevout"));
     }
     let prev_output = prev_tx
         .output
         .get(prevout.vout as usize)
         .ok_or_else(|| format!("input {i}: prevout index is outside non_witness_utxo outputs"))?;
     if prev_output != witness_utxo {
-        return Err(format!(
-            "input {i}: witness_utxo does not match non_witness_utxo prevout"
-        ));
+        return Err(format!("input {i}: witness_utxo does not match non_witness_utxo prevout"));
     }
     Ok(())
 }

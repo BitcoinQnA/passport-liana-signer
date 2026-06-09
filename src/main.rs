@@ -490,7 +490,11 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     cb.set_review_saved(false);
                     let msg = format!("{e}");
                     // A user cancel is not an error to surface.
-                    cb.set_review_signed_detail(if msg.contains("cancelled") { "".into() } else { trfmt(TrId::ErrorSaveFailed, &[&msg]).into() });
+                    cb.set_review_signed_detail(if msg.contains("cancelled") {
+                        "".into()
+                    } else {
+                        trfmt(TrId::ErrorSaveFailed, &[&msg]).into()
+                    });
                 }
             }
         });
@@ -1113,9 +1117,7 @@ fn network_display(network: Network) -> &'static str {
     }
 }
 
-fn is_public_network(network: Network) -> bool {
-    matches!(network, Network::Bitcoin | Network::Signet)
-}
+fn is_public_network(network: Network) -> bool { matches!(network, Network::Bitcoin | Network::Signet) }
 
 fn network_from_label(label: &str) -> Option<Network> {
     match label {
@@ -1546,12 +1548,7 @@ fn read_psbt_via_picker() -> anyhow::Result<Psbt> {
 /// rust-fatfs the FAT and data bytes hit the block cache during the write, but the
 /// directory entry only persists on `File::flush` / close. A bare
 /// `FileSystem::flush` on a still-open file leaves a stale entry and a torn image.
-fn write_export(
-    filename: &str,
-    bytes: &[u8],
-    location: fs::Location,
-    dir: &str,
-) -> anyhow::Result<String> {
+fn write_export(filename: &str, bytes: &[u8], location: fs::Location, dir: &str) -> anyhow::Result<String> {
     use std::io::Write;
     let mut filesystem = FileSystem::default();
     let directory = filesystem.create_dir(dir, location).map_err(|e| {
@@ -1573,11 +1570,7 @@ fn write_export(
     let path = format!("{dir}/{unique}");
     {
         let mut file = filesystem
-            .open_file(
-                path.clone(),
-                location,
-                fs::OpenFlags { read: false, write: true, create: true },
-            )
+            .open_file(path.clone(), location, fs::OpenFlags { read: false, write: true, create: true })
             .map_err(|e| anyhow::anyhow!("open {path}: {e:?}"))?;
         let mut written = 0usize;
         while written < bytes.len() {
@@ -1604,8 +1597,8 @@ fn export_via_picker(filename: &str, bytes: &[u8]) -> anyhow::Result<String> {
     let options = SelectFileOptions::default()
         .with_dir_selection_mode(true)
         .with_allowed_locations(AllowedLocations::All);
-    let result = select_file::<GuiPermissions>(options)
-        .map_err(|e| anyhow::anyhow!("picker error: {e:?}"))?;
+    let result =
+        select_file::<GuiPermissions>(options).map_err(|e| anyhow::anyhow!("picker error: {e:?}"))?;
     let Some(result) = result else {
         anyhow::bail!("cancelled");
     };
@@ -1663,8 +1656,9 @@ fn psbt_base64(psbt: &Psbt) -> String {
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use super::*;
     use liana::bitcoin::sighash::EcdsaSighashType;
+
+    use super::*;
 
     fn device() -> (Secp256k1<All>, Xpub, Fingerprint) {
         let secp = Secp256k1::new();
@@ -1767,8 +1761,7 @@ mod tests {
     fn time_based_csv_descriptor_is_rejected_for_now() {
         let (a, b) = (test_key(0x34), test_key(0x35));
         let time_based_csv = (1 << 22) + 144;
-        let desc =
-            format!("wsh(or_d(pk({a}/<0;1>/*),and_v(v:pkh({b}/<0;1>/*),older({time_based_csv}))))");
+        let desc = format!("wsh(or_d(pk({a}/<0;1>/*),and_v(v:pkh({b}/<0;1>/*),older({time_based_csv}))))");
         let err = import_error(&desc);
         assert!(err.contains("block-based"), "got: {err}");
     }
