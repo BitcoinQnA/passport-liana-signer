@@ -105,10 +105,9 @@ export component ReviewPagePage inherits Rectangle {
                         wrap: word-wrap;
                     }
 
-                    // Distinct recovery warning (Liana red).
-                    if Callbacks.review-is-recovery: LianaCard {
+                    // Distinct warning banner (recovery path or high fee).
+                    if Callbacks.review-warning != "": LianaCard {
                         width: 448px;
-                        height: 96px;
                         recovery: true;
                         VerticalLayout {
                             padding: Size.sz4;

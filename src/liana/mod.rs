@@ -25,6 +25,7 @@ pub mod store;
 use serde::{Deserialize, Serialize};
 
 pub type Result<T> = std::result::Result<T, Error>;
+pub const POLICY_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
@@ -59,6 +60,10 @@ impl std::error::Error for Error {}
 /// A Liana policy the user has registered on Passport.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RegisteredPolicy {
+    /// JSON storage schema. Defaults to v1 for policies saved by earlier builds
+    /// before the field existed.
+    #[serde(default = "default_policy_schema_version")]
+    pub schema_version: u32,
     pub id: String,
     pub name: String,
     pub network: String,
@@ -71,6 +76,10 @@ pub struct RegisteredPolicy {
     /// permanently deleted from the archive. Defaults false for older records.
     #[serde(default)]
     pub archived: bool,
+}
+
+fn default_policy_schema_version() -> u32 {
+    POLICY_SCHEMA_VERSION
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -98,5 +107,7 @@ pub struct SpendPath {
 
 impl SpendPath {
     /// Approximate the relative timelock in months (~4380 blocks/month).
-    pub fn approx_months(&self) -> Option<u32> { self.relative_timelock_blocks.map(|b| b / 4380) }
+    pub fn approx_months(&self) -> Option<u32> {
+        self.relative_timelock_blocks.map(|b| b / 4380)
+    }
 }

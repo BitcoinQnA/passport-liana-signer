@@ -25,6 +25,11 @@ pub fn import(text: &str) -> Result<ParsedDescriptor> {
     if trimmed.is_empty() {
         return Err(Error::Parse("empty descriptor".into()));
     }
+    if !has_explicit_checksum(trimmed) {
+        return Err(Error::Parse(
+            "descriptor checksum is required; export the policy descriptor from Liana including the #checksum suffix".into(),
+        ));
+    }
 
     let descriptor = Descriptor::<DescriptorPublicKey>::from_str(trimmed)
         .map_err(|e| Error::Parse(format!("invalid descriptor: {e}")))?;
@@ -58,6 +63,14 @@ pub fn import(text: &str) -> Result<ParsedDescriptor> {
         checksum,
         canonical,
     })
+}
+
+fn has_explicit_checksum(text: &str) -> bool {
+    text.rsplit_once('#')
+        .map(|(_, checksum)| {
+            checksum.len() == 8 && checksum.chars().all(|c| c.is_ascii_alphanumeric())
+        })
+        .unwrap_or(false)
 }
 
 fn kind_name(d: &Descriptor<DescriptorPublicKey>) -> &'static str {

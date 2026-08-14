@@ -22,8 +22,8 @@ use gui_permissions::GuiPermissions;
 // Bitcoin types used only by the test fixtures (seed_sample / build_owner_psbt).
 #[cfg(test)]
 use liana::bitcoin::{
-    absolute::LockTime, psbt::Input, transaction::Version, Amount, OutPoint, PublicKey, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Txid, Witness,
+    absolute::LockTime, psbt::Input, transaction::Version, Amount, OutPoint, PublicKey, ScriptBuf,
+    Sequence, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use liana::{
     bitcoin::{
@@ -37,7 +37,9 @@ use liana::{
 use slint_keyos_platform::{
     app,
     gui_server_api::navigation::{
-        filepicker::{AllowedExtensions, AllowedLocations, Location as PickLocation, SelectFileOptions},
+        filepicker::{
+            AllowedExtensions, AllowedLocations, Location as PickLocation, SelectFileOptions,
+        },
         qrscanner::{ScanQrOptions, ScanQrResult},
     },
     navigation::{open_qr_scanner, select_file},
@@ -56,6 +58,7 @@ const GAP: u32 = 100; // address indices to check when matching a PSBT / address
 const DATA_SUBDIR: &str = ".passport-liana-signer-keyos";
 const MAX_PSBT_BYTES: u64 = 1_048_576;
 const MAX_DESCRIPTOR_BYTES: u64 = 131_072;
+const HIGH_FEE_WARNING_PERCENT: u64 = 25;
 
 // File-exchange paths inside DATA_SUBDIR (Liana on the same host reads/writes
 // these for the Signet test). No QR: Liana is file-only (no UR/BBQr/scanner).
@@ -160,10 +163,15 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
     {
         let state = state.clone();
         let weak = ui.as_weak();
-        ui.global::<Callbacks>().on_set_xpub_network(move |network| {
-            let Some(ui) = weak.upgrade() else { return };
-            set_xpub_export(&ui, &state, network_from_label(network.as_str()).unwrap_or(DEFAULT_NETWORK));
-        });
+        ui.global::<Callbacks>()
+            .on_set_xpub_network(move |network| {
+                let Some(ui) = weak.upgrade() else { return };
+                set_xpub_export(
+                    &ui,
+                    &state,
+                    network_from_label(network.as_str()).unwrap_or(DEFAULT_NETWORK),
+                );
+            });
     }
 
     // -- export key to a chosen location via the file picker ----------------
@@ -174,7 +182,8 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
             let Some(ui) = weak.upgrade() else { return };
             let key = {
                 let st = state.lock().unwrap();
-                key_with_origin(&st.seed, &st.secp, st.fp, st.xpub_network).unwrap_or_else(|_| String::new())
+                key_with_origin(&st.seed, &st.secp, st.fp, st.xpub_network)
+                    .unwrap_or_else(|_| String::new())
             };
             let cb = ui.global::<Callbacks>();
             cb.set_export_ok(false);
@@ -187,15 +196,23 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     cb.set_export_error("".into());
                     cb.set_export_done_title(tr::lookup_id(TrId::ExportKeySavedTitle).into());
                     cb.set_export_done_detail(
-                        format!("{}\n{}", format_saved_to(&dest), tr::lookup_id(TrId::ExportKeySavedDetail))
-                            .into(),
+                        format!(
+                            "{}\n{}",
+                            format_saved_to(&dest),
+                            tr::lookup_id(TrId::ExportKeySavedDetail)
+                        )
+                        .into(),
                     );
                     cb.set_export_ok(true);
                 }
                 Err(e) => {
                     let msg = format!("{e}");
                     // A user cancel is not an error to surface.
-                    cb.set_export_error(if msg.contains("cancelled") { "".into() } else { msg.into() });
+                    cb.set_export_error(if msg.contains("cancelled") {
+                        "".into()
+                    } else {
+                        msg.into()
+                    });
                 }
             }
         });
@@ -229,7 +246,10 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     Ok(p) => p,
                     Err(e) => {
                         let err = format!("{e}");
-                        review_message(&ui, &trfmt(TrId::ErrorReadNamedFile, &[UNSIGNED_PSBT_FILE, &err]));
+                        review_message(
+                            &ui,
+                            &trfmt(TrId::ErrorReadNamedFile, &[UNSIGNED_PSBT_FILE, &err]),
+                        );
                         ui.global::<Callbacks>().set_review_ready(true);
                         return;
                     }
@@ -277,11 +297,17 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 match matched {
                     Ok(Some((reg, m))) => {
                         populate_review(&ui, &reg, &psbt, &m);
-                        state2.lock().unwrap().pending = Some(Pending { psbt, policy: reg, matched: m });
+                        state2.lock().unwrap().pending = Some(Pending {
+                            psbt,
+                            policy: reg,
+                            matched: m,
+                        });
                         set_status(&ui, tr::lookup_id(TrId::StatusLoadedPsbt));
                     }
                     Ok(None) => review_message(&ui, tr::lookup_id(TrId::ReviewNoMatch)),
-                    Err(e) => review_message(&ui, &trfmt(TrId::ErrorMatchFailed, &[&format!("{e}")])),
+                    Err(e) => {
+                        review_message(&ui, &trfmt(TrId::ErrorMatchFailed, &[&e.to_string()]))
+                    }
                 }
                 ui.global::<Callbacks>().set_psbt_loading(false);
             })
@@ -350,7 +376,11 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                         _ => tr::lookup_id(TrId::VerifyReceiveKind).to_string(),
                     };
                     cb.set_verify_detail(
-                        trfmt(TrId::VerifySuccessDetail, &[name, &kind, &index.to_string()]).into(),
+                        trfmt(
+                            TrId::VerifySuccessDetail,
+                            &[name, &kind, &index.to_string()],
+                        )
+                        .into(),
                     );
                 }
                 None => {
@@ -407,7 +437,12 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     }
                 };
                 // Sign only — Liana (the coordinator) combines + finalizes.
-                match signing::sign(pending.psbt, &master, &st.secp) {
+                match signing::sign(
+                    pending.psbt,
+                    &master,
+                    &st.secp,
+                    pending.matched.expected_signatures,
+                ) {
                     Ok(signed) => {
                         // Keep an app-data copy (handy for the same-Mac sim test).
                         write_bridge_file(&st.data_dir, SIGNED_PSBT_FILE, &signed.serialize());
@@ -475,7 +510,9 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 Ok(dest) => {
                     cb.set_review_saved(true);
                     cb.set_review_signed_detail("".into());
-                    cb.set_export_done_title(tr::lookup_id(TrId::ExportTransactionSignedTitle).into());
+                    cb.set_export_done_title(
+                        tr::lookup_id(TrId::ExportTransactionSignedTitle).into(),
+                    );
                     cb.set_export_done_detail(
                         format!(
                             "{}\n{}",
@@ -490,7 +527,11 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     cb.set_review_saved(false);
                     let msg = format!("{e}");
                     // A user cancel is not an error to surface.
-                    cb.set_review_signed_detail(if msg.contains("cancelled") { "".into() } else { trfmt(TrId::ErrorSaveFailed, &[&msg]).into() });
+                    cb.set_review_signed_detail(if msg.contains("cancelled") {
+                        "".into()
+                    } else {
+                        trfmt(TrId::ErrorSaveFailed, &[&msg]).into()
+                    });
                 }
             }
         });
@@ -519,8 +560,9 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 match read_text_path_limited(&bridge, MAX_DESCRIPTOR_BYTES, "descriptor") {
                     Ok(t) => t,
                     Err(e) => {
-                        ui.global::<Callbacks>()
-                            .set_import_error(trfmt(TrId::ErrorReadFile, &[&format!("{e}")]).into());
+                        ui.global::<Callbacks>().set_import_error(
+                            trfmt(TrId::ErrorReadFile, &[&format!("{e}")]).into(),
+                        );
                         return;
                     }
                 }
@@ -544,8 +586,15 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 let mut st = state.lock().unwrap();
                 match register_descriptor(&text, st.fp) {
                     Ok(reg) => {
-                        if st.policies.find_by_checksum(&reg.descriptor_checksum).is_some() {
-                            Err(trfmt(TrId::ImportErrorDuplicate, &[&reg.descriptor_checksum]))
+                        if st
+                            .policies
+                            .find_by_checksum(&reg.descriptor_checksum)
+                            .is_some()
+                        {
+                            Err(trfmt(
+                                TrId::ImportErrorDuplicate,
+                                &[&reg.descriptor_checksum],
+                            ))
                         } else {
                             st.pending_import = Some(reg.clone());
                             Ok(reg)
@@ -579,7 +628,11 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
         ui.global::<Callbacks>().on_confirm_import(move || {
             let Some(ui) = weak.upgrade() else { return };
             // Apply the user-chosen name (fall back to the default if blank).
-            let chosen = ui.global::<Callbacks>().get_import_name().trim().to_string();
+            let chosen = ui
+                .global::<Callbacks>()
+                .get_import_name()
+                .trim()
+                .to_string();
             let result = {
                 let mut st = state.lock().unwrap();
                 match st.pending_import.take() {
@@ -588,9 +641,11 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                             reg.name = chosen;
                         }
                         match save_policy(&st.data_dir, &reg) {
-                            Ok(()) => {
-                                st.policies.add(reg.clone()).map(|_| reg).map_err(|e| anyhow::anyhow!("{e}"))
-                            }
+                            Ok(()) => st
+                                .policies
+                                .add(reg.clone())
+                                .map(|_| reg)
+                                .map_err(|e| anyhow::anyhow!("{e}")),
                             Err(e) => {
                                 st.pending_import = Some(reg);
                                 Err(e)
@@ -746,7 +801,11 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 match st.policies.find_by_checksum(id.as_str()) {
                     Some(reg) => {
                         let filename = format!("liana-descriptor-{id}.txt");
-                        (reg.descriptor.clone(), st.data_dir.join(&filename), filename)
+                        (
+                            reg.descriptor.clone(),
+                            st.data_dir.join(&filename),
+                            filename,
+                        )
                     }
                     None => {
                         set_status(&ui, tr::lookup_id(TrId::ErrorPolicyNotFound));
@@ -762,7 +821,9 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
             match export_via_picker(&filename, descriptor.as_bytes()) {
                 Ok(dest) => {
                     cb.set_export_error("".into());
-                    cb.set_export_done_title(tr::lookup_id(TrId::ExportDescriptorSavedTitle).into());
+                    cb.set_export_done_title(
+                        tr::lookup_id(TrId::ExportDescriptorSavedTitle).into(),
+                    );
                     cb.set_export_done_detail(
                         format!(
                             "{}\n{}",
@@ -775,7 +836,11 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 }
                 Err(e) => {
                     let msg = format!("{e}");
-                    cb.set_export_error(if msg.contains("cancelled") { "".into() } else { msg.into() });
+                    cb.set_export_error(if msg.contains("cancelled") {
+                        "".into()
+                    } else {
+                        msg.into()
+                    });
                 }
             }
         });
@@ -789,7 +854,9 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
 // ---------------------------------------------------------------------------
 
 fn policy_row(p: &RegisteredPolicy) -> PolicyRow {
-    let network = network_from_policy(p).map(network_display).unwrap_or(p.network.as_str());
+    let network = network_from_policy(p)
+        .map(network_display)
+        .unwrap_or(p.network.as_str());
     PolicyRow {
         id: p.descriptor_checksum.clone().into(),
         name: p.name.clone().into(),
@@ -802,8 +869,20 @@ fn policy_row(p: &RegisteredPolicy) -> PolicyRow {
 fn refresh_home(ui: &AppWindow, state: &Arc<Mutex<AppState>>) {
     let st = state.lock().unwrap();
     // Active policies drive the home list; archived ones live in the archive.
-    let active: Vec<PolicyRow> = st.policies.all().iter().filter(|p| !p.archived).map(policy_row).collect();
-    let archived: Vec<PolicyRow> = st.policies.all().iter().filter(|p| p.archived).map(policy_row).collect();
+    let active: Vec<PolicyRow> = st
+        .policies
+        .all()
+        .iter()
+        .filter(|p| !p.archived)
+        .map(policy_row)
+        .collect();
+    let archived: Vec<PolicyRow> = st
+        .policies
+        .all()
+        .iter()
+        .filter(|p| p.archived)
+        .map(policy_row)
+        .collect();
     let cb = ui.global::<Callbacks>();
     cb.set_policy_count(active.len() as i32);
     cb.set_archived_count(archived.len() as i32);
@@ -819,7 +898,10 @@ fn populate_detail(ui: &AppWindow, reg: &RegisteredPolicy) {
     cb.set_rename_value(reg.name.clone().into());
     cb.set_detail_checksum(format!("#{}", reg.descriptor_checksum).into());
     cb.set_detail_network(
-        network_from_policy(reg).map(network_display).unwrap_or(reg.network.as_str()).into(),
+        network_from_policy(reg)
+            .map(network_display)
+            .unwrap_or(reg.network.as_str())
+            .into(),
     );
     cb.set_detail_descriptor(reg.descriptor.clone().into());
     cb.set_detail_archived(reg.archived);
@@ -827,16 +909,21 @@ fn populate_detail(ui: &AppWindow, reg: &RegisteredPolicy) {
     // Number recovery tiers when there is more than one (a decaying policy), so
     // "Recovery path 1 / 2 / 3" disambiguate the cards; a lone recovery stays
     // just "Recovery path".
-    let recovery_total = reg.paths.iter().filter(|p| matches!(p.kind, SpendPathKind::Recovery)).count();
+    let recovery_total = reg
+        .paths
+        .iter()
+        .filter(|p| matches!(p.kind, SpendPathKind::Recovery))
+        .count();
     let mut recovery_seen = 0usize;
     let mut paths: Vec<PathRow> = Vec::with_capacity(reg.paths.len());
     for p in &reg.paths {
         let is_recovery = matches!(p.kind, SpendPathKind::Recovery);
         // Does Passport own a key on this path?
-        let owned = p
-            .signer_fingerprints
-            .iter()
-            .any(|fp| reg.signers.iter().any(|s| &s.fingerprint == fp && s.owned_by_passport));
+        let owned = p.signer_fingerprints.iter().any(|fp| {
+            reg.signers
+                .iter()
+                .any(|s| &s.fingerprint == fp && s.owned_by_passport)
+        });
         // Natural phrasing, avoiding "1 key(s)". Singular keys get "the key";
         // all-of-N gets "all N keys"; thresholds get "M of N keys".
         let who = if p.total_keys == 1 {
@@ -844,15 +931,21 @@ fn populate_detail(ui: &AppWindow, reg: &RegisteredPolicy) {
         } else if p.threshold == p.total_keys {
             trfmt(TrId::PathAllKeys, &[&p.total_keys.to_string()])
         } else {
-            trfmt(TrId::PathThresholdKeys, &[&p.threshold.to_string(), &p.total_keys.to_string()])
+            trfmt(
+                TrId::PathThresholdKeys,
+                &[&p.threshold.to_string(), &p.total_keys.to_string()],
+            )
         };
         let (headline, detail) = if is_recovery {
             let n = p.relative_timelock_blocks.unwrap_or(0);
             let months = n / 4380;
             let blocks = commas(n);
             let months = months.to_string();
-            let sig =
-                if owned { tr::lookup_id(TrId::PathThisPassportHoldsOne).to_string() } else { String::new() };
+            let sig = if owned {
+                tr::lookup_id(TrId::PathThisPassportHoldsOne).to_string()
+            } else {
+                String::new()
+            };
             (
                 trfmt(TrId::PathAfterMonths, &[&months]),
                 trfmt(TrId::PathRecoveryDetail, &[&blocks, &months, &who, &sig]),
@@ -918,9 +1011,10 @@ fn populate_review(ui: &AppWindow, reg: &RegisteredPolicy, psbt: &Psbt, m: &lpsb
 
     let path_label = match m.active_path {
         Some(SpendPathKind::Primary) => tr::lookup_id(TrId::ReviewPathPrimary).to_string(),
-        Some(SpendPathKind::Recovery) => {
-            trfmt(TrId::ReviewPathRecovery, &[&m.active_timelock_blocks.unwrap_or(0).to_string()])
-        }
+        Some(SpendPathKind::Recovery) => trfmt(
+            TrId::ReviewPathRecovery,
+            &[&m.active_timelock_blocks.unwrap_or(0).to_string()],
+        ),
         None => tr::lookup_id(TrId::ReviewPathUnknown).to_string(),
     };
     cb.set_review_path_label(path_label.into());
@@ -928,9 +1022,17 @@ fn populate_review(ui: &AppWindow, reg: &RegisteredPolicy, psbt: &Psbt, m: &lpsb
     // Outputs + fee. Build one row per output, flagging the ones that pay back
     // into this wallet (change) vs the ones actually leaving (destinations), so
     // the UI can separate them visually and we can total what's truly sent.
-    let out_sum: u64 = psbt.unsigned_tx.output.iter().map(|o| o.value.to_sat()).sum();
-    let in_sum: u64 =
-        psbt.inputs.iter().filter_map(|i| i.witness_utxo.as_ref().map(|u| u.value.to_sat())).sum();
+    let out_sum: u64 = psbt
+        .unsigned_tx
+        .output
+        .iter()
+        .map(|o| o.value.to_sat())
+        .sum();
+    let in_sum: u64 = psbt
+        .inputs
+        .iter()
+        .filter_map(|i| i.witness_utxo.as_ref().map(|u| u.value.to_sat()))
+        .sum();
 
     let mut rows: Vec<OutputRow> = Vec::new();
     let mut leaving: u64 = 0;
@@ -939,10 +1041,14 @@ fn populate_review(ui: &AppWindow, reg: &RegisteredPolicy, psbt: &Psbt, m: &lpsb
         let (address, is_change) = match Address::from_script(&o.script_pubkey, network) {
             Ok(addr) => {
                 let a = addr.to_string();
-                let change = verify_address_in_policy(&reg.descriptor, &a.to_lowercase(), network).is_some();
+                let change =
+                    verify_address_in_policy(&reg.descriptor, &a.to_lowercase(), network).is_some();
                 (a, change)
             }
-            Err(_) => (tr::lookup_id(TrId::ReviewNonStandardScript).to_string(), false),
+            Err(_) => (
+                tr::lookup_id(TrId::ReviewNonStandardScript).to_string(),
+                false,
+            ),
         };
         if !is_change {
             leaving += sats;
@@ -961,16 +1067,34 @@ fn populate_review(ui: &AppWindow, reg: &RegisteredPolicy, psbt: &Psbt, m: &lpsb
     cb.set_review_fee(format!("{} sats", commas(fee)).into());
     // What actually leaves the wallet's control = amount sent + miner fee.
     // Change returns to the wallet, so it is excluded.
-    cb.set_review_total_out(format!("{} sats", commas(leaving + fee)).into());
+    let total_leaving = leaving.saturating_add(fee);
+    cb.set_review_total_out(format!("{} sats", commas(total_leaving)).into());
 
-    let warning =
-        if is_recovery { tr::lookup_id(TrId::ReviewRecoveryWarning).to_string() } else { String::new() };
-    cb.set_review_warning(warning.into());
+    let mut warnings = Vec::new();
+    if is_recovery {
+        warnings.push(tr::lookup_id(TrId::ReviewRecoveryWarning).to_string());
+    }
+    if total_leaving > 0 && fee > 0 {
+        let fee_percent = ((fee as u128) * 100 / (total_leaving as u128)) as u64;
+        if fee_percent >= HIGH_FEE_WARNING_PERCENT {
+            warnings.push(trfmt(
+                TrId::ReviewHighFeeWarning,
+                &[&fee_percent.to_string()],
+            ));
+        }
+    }
+    cb.set_review_warning(warnings.join("\n").into());
 
     let status = if !m.matched {
         tr::lookup_id(TrId::ReviewNotPolicy).to_string()
     } else if !m.passport_can_sign {
-        tr::lookup_id(TrId::ReviewNoKeyOnPath).to_string()
+        let reason = match signing::decide(m, reg) {
+            signing::SignDecision::Refuse(reason) => reason,
+            signing::SignDecision::Allow { .. } => {
+                tr::lookup_id(TrId::ReviewNoKeyOnPath).to_string()
+            }
+        };
+        trfmt(TrId::ReviewBlockedReason, &[&reason])
     } else {
         String::new()
     };
@@ -1007,7 +1131,9 @@ fn clear_verify(ui: &AppWindow) {
     cb.set_verify_detail("".into());
 }
 
-fn set_status(ui: &AppWindow, msg: &str) { ui.global::<Callbacks>().set_status(msg.to_string().into()); }
+fn set_status(ui: &AppWindow, msg: &str) {
+    ui.global::<Callbacks>().set_status(msg.to_string().into());
+}
 
 fn trfmt(id: TrId, args: &[&str]) -> String {
     let mut text = tr::lookup_id(id).to_string();
@@ -1017,7 +1143,9 @@ fn trfmt(id: TrId, args: &[&str]) -> String {
     text
 }
 
-fn format_saved_to(dest: &str) -> String { format!("{} {dest}", tr::lookup_id(TrId::ExportSavedTo)) }
+fn format_saved_to(dest: &str) -> String {
+    format!("{} {dest}", tr::lookup_id(TrId::ExportSavedTo))
+}
 
 // ---------------------------------------------------------------------------
 // Policy building / persistence
@@ -1062,7 +1190,12 @@ fn key_with_origin(
 ) -> anyhow::Result<String> {
     let path = account_path(network);
     let xpub = account_xpub(seed, secp, network)?;
-    Ok(format!("[{}/{}]{}", fp, path.trim_start_matches("m/"), xpub))
+    Ok(format!(
+        "[{}/{}]{}",
+        fp,
+        path.trim_start_matches("m/"),
+        xpub
+    ))
 }
 
 fn set_xpub_export(ui: &AppWindow, state: &Arc<Mutex<AppState>>, network: Network) {
@@ -1132,24 +1265,40 @@ fn network_from_policy(policy: &RegisteredPolicy) -> Option<Network> {
     network_from_label(policy.network.as_str())
 }
 
-fn network_from_descriptor(descriptor: &str) -> Network {
-    if descriptor.contains("xpub") || descriptor.contains("ypub") || descriptor.contains("zpub") {
-        Network::Bitcoin
-    } else {
-        // Liana's signet/testnet exports use testnet-style extended keys. The
-        // app defaults those to Signet because this companion flow is tested
-        // there and signet/testnet addresses share the `tb` human prefix.
-        Network::Signet
+fn network_from_descriptor(descriptor: &str) -> anyhow::Result<Network> {
+    let has_mainnet_key = ["xpub", "ypub", "zpub"]
+        .iter()
+        .any(|prefix| descriptor.contains(prefix));
+    let has_testnet_key = ["tpub", "upub", "vpub"]
+        .iter()
+        .any(|prefix| descriptor.contains(prefix));
+
+    match (has_mainnet_key, has_testnet_key) {
+        (true, false) => Ok(Network::Bitcoin),
+        (false, true) => {
+            // Liana's signet/testnet exports use testnet-style extended keys.
+            // The app supports Signet as the public test network for this flow.
+            Ok(Network::Signet)
+        }
+        (true, true) => anyhow::bail!("descriptor mixes mainnet and testnet extended keys"),
+        (false, false) => {
+            anyhow::bail!("descriptor network could not be determined from public extended keys")
+        }
     }
 }
 
 fn register_descriptor(text: &str, passport_fp: Fingerprint) -> anyhow::Result<RegisteredPolicy> {
     let parsed = descriptor::import(text).map_err(|e| anyhow::anyhow!("{e}"))?;
     let id = parsed.checksum.clone();
-    let network = network_from_descriptor(&parsed.canonical);
-    let reg =
-        policy::build_registered_policy(id, "Imported policy", network_label(network), &parsed, passport_fp)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let network = network_from_descriptor(&parsed.canonical)?;
+    let reg = policy::build_registered_policy(
+        id,
+        "Imported policy",
+        network_label(network),
+        &parsed,
+        passport_fp,
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
     if !reg.signers.iter().any(|s| s.owned_by_passport) {
         anyhow::bail!("{}", tr::lookup_id(TrId::ImportErrorNoPassportKey));
     }
@@ -1177,15 +1326,26 @@ fn seed_sample(
 }
 
 #[cfg(test)]
-fn sample_descriptor(secp: &Secp256k1<All>, device_account_xpub: &Xpub, device_fp: Fingerprint) -> String {
+fn descriptor_with_checksum(raw: &str) -> String {
+    liana::miniscript::Descriptor::<liana::miniscript::DescriptorPublicKey>::from_str(raw)
+        .expect("test descriptor parses")
+        .to_string()
+}
+
+#[cfg(test)]
+fn sample_descriptor(
+    secp: &Secp256k1<All>,
+    device_account_xpub: &Xpub,
+    device_fp: Fingerprint,
+) -> String {
     let rec_master = Xpriv::new_master(DEFAULT_NETWORK, &[0x22; 32]).unwrap();
     let rec_fp = rec_master.fingerprint(secp);
     let acct = DerivationPath::from_str(TEST_ACCOUNT_PATH).unwrap();
     let rec_xpub = Xpub::from_priv(secp, &rec_master.derive_priv(secp, &acct).unwrap());
     let p = TEST_ACCOUNT_PATH.trim_start_matches("m/");
-    format!(
+    descriptor_with_checksum(&format!(
         "wsh(or_d(pk([{device_fp}/{p}]{device_account_xpub}/<0;1>/*),and_v(v:pkh([{rec_fp}/{p}]{rec_xpub}/<0;1>/*),older({RECOVERY_BLOCKS}))))"
-    )
+    ))
 }
 
 /// Build a demo owner-path PSBT spending the policy's index-0 output (test only).
@@ -1197,8 +1357,13 @@ fn build_owner_psbt(
     device_fp: Fingerprint,
 ) -> anyhow::Result<Psbt> {
     let parsed = descriptor::import(&reg.descriptor).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let singles = parsed.descriptor.into_single_descriptors().map_err(|e| anyhow::anyhow!("{e}"))?;
-    let def = singles[0].at_derivation_index(0).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let singles = parsed
+        .descriptor
+        .into_single_descriptors()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let def = singles[0]
+        .at_derivation_index(0)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let spk = def.script_pubkey();
     let ws = def.explicit_script().map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -1208,7 +1373,8 @@ fn build_owner_psbt(
 
     let value = Amount::from_sat(100_000);
     let prevout = OutPoint {
-        txid: Txid::from_str("0000000000000000000000000000000000000000000000000000000000000001").unwrap(),
+        txid: Txid::from_str("0000000000000000000000000000000000000000000000000000000000000001")
+            .unwrap(),
         vout: 0,
     };
     let tx = Transaction {
@@ -1222,47 +1388,70 @@ fn build_owner_psbt(
         }],
         output: vec![TxOut {
             value: Amount::from_sat(90_000),
-            script_pubkey: ScriptBuf::from_hex("0014000000000000000000000000000000000000dead").unwrap(),
+            script_pubkey: ScriptBuf::from_hex("0014000000000000000000000000000000000000dead")
+                .unwrap(),
         }],
     };
     let mut psbt = Psbt::from_unsigned_tx(tx).map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut input = Input {
-        witness_utxo: Some(TxOut { value, script_pubkey: spk }),
+        witness_utxo: Some(TxOut {
+            value,
+            script_pubkey: spk,
+        }),
         witness_script: Some(ws),
         ..Default::default()
     };
-    input.bip32_derivation.insert(dev_pk.inner, (device_fp, full));
+    input
+        .bip32_derivation
+        .insert(dev_pk.inner, (device_fp, full));
     psbt.inputs[0] = input;
     Ok(psbt)
 }
 
 fn policy_summary(p: &RegisteredPolicy) -> String {
-    let network = network_from_policy(p).map(network_display).unwrap_or(p.network.as_str());
+    let network = network_from_policy(p)
+        .map(network_display)
+        .unwrap_or(p.network.as_str());
     let recovery = p
         .paths
         .iter()
         .find(|x| matches!(x.kind, SpendPathKind::Recovery))
         .and_then(|x| x.relative_timelock_blocks);
     match recovery {
-        Some(n) => trfmt(TrId::SummaryRecoveryAfterMonths, &[network, &(n / 4380).to_string()]),
+        Some(n) => trfmt(
+            TrId::SummaryRecoveryAfterMonths,
+            &[network, &(n / 4380).to_string()],
+        ),
         None => trfmt(TrId::SummarySinglePath, &[network]),
     }
 }
 
 fn policy_is_signable(policy: &RegisteredPolicy) -> bool {
-    !policy.archived && network_from_policy(policy).map(is_public_network).unwrap_or(false)
+    !policy.archived
+        && network_from_policy(policy)
+            .map(is_public_network)
+            .unwrap_or(false)
 }
 
 fn signable_policies(store: &store::PolicyStore) -> Vec<RegisteredPolicy> {
-    store.all().iter().filter(|p| policy_is_signable(p)).cloned().collect()
+    store
+        .all()
+        .iter()
+        .filter(|p| policy_is_signable(p))
+        .cloned()
+        .collect()
 }
 
-fn load_policies(dir: &Path) -> store::PolicyStore { load_policies_impl(dir) }
+fn load_policies(dir: &Path) -> store::PolicyStore {
+    load_policies_impl(dir)
+}
 
 #[cfg(not(keyos))]
 fn load_policies_impl(dir: &Path) -> store::PolicyStore {
     let mut s = store::PolicyStore::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return s };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return s;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
@@ -1281,14 +1470,20 @@ fn load_policies_impl(dir: &Path) -> store::PolicyStore {
 fn load_policies_impl(_dir: &Path) -> store::PolicyStore {
     let fs = FileSystem::default();
     let mut s = store::PolicyStore::new();
-    let Ok(dir) = fs.open_dir("", fs::Location::AppData) else { return s };
+    let Ok(dir) = fs.open_dir("", fs::Location::AppData) else {
+        return s;
+    };
     while let Ok(Some(entry)) = dir.next_entry() {
         if !entry.name.starts_with("policy_") || !entry.name.ends_with(".json") || entry.is_dir {
             continue;
         }
-        let Ok(text) =
-            read_text_fs_limited(&fs, &entry.name, fs::Location::AppData, MAX_DESCRIPTOR_BYTES, "policy")
-        else {
+        let Ok(text) = read_text_fs_limited(
+            &fs,
+            &entry.name,
+            fs::Location::AppData,
+            MAX_DESCRIPTOR_BYTES,
+            "policy",
+        ) else {
             continue;
         };
         if let Ok(reg) = store::from_json(&text) {
@@ -1298,13 +1493,18 @@ fn load_policies_impl(_dir: &Path) -> store::PolicyStore {
     s
 }
 
-fn save_policy(dir: &Path, reg: &RegisteredPolicy) -> anyhow::Result<()> { save_policy_impl(dir, reg) }
+fn save_policy(dir: &Path, reg: &RegisteredPolicy) -> anyhow::Result<()> {
+    save_policy_impl(dir, reg)
+}
 
 #[cfg(not(keyos))]
 fn save_policy_impl(dir: &Path, reg: &RegisteredPolicy) -> anyhow::Result<()> {
     let json = store::to_json(reg).map_err(|e| anyhow::anyhow!("{e}"))?;
     let path = dir.join(format!("policy_{}.json", reg.descriptor_checksum));
-    std::fs::write(path, json)?;
+    let tmp_path = dir.join(format!("policy_{}.json.tmp", reg.descriptor_checksum));
+    let _ = std::fs::remove_file(&tmp_path);
+    std::fs::write(&tmp_path, json)?;
+    std::fs::rename(&tmp_path, &path)?;
     Ok(())
 }
 
@@ -1314,17 +1514,39 @@ fn save_policy_impl(_dir: &Path, reg: &RegisteredPolicy) -> anyhow::Result<()> {
 
     let json = store::to_json(reg).map_err(|e| anyhow::anyhow!("{e}"))?;
     let path = format!("policy_{}.json", reg.descriptor_checksum);
+    let tmp_path = format!("{path}.tmp");
     let mut fs = FileSystem::default();
+    let _ = fs.remove(&tmp_path, fs::Location::AppData);
     {
         let mut file = fs
-            .open_file(&path, fs::Location::AppData, fs::OpenFlags { read: true, write: true, create: true })
-            .map_err(|e| anyhow::anyhow!("open {path}: {e:?}"))?;
+            .open_file(
+                &tmp_path,
+                fs::Location::AppData,
+                fs::OpenFlags {
+                    read: true,
+                    write: true,
+                    create: true,
+                },
+            )
+            .map_err(|e| anyhow::anyhow!("open {tmp_path}: {e:?}"))?;
         file.seek(SeekFrom::Start(0))?;
         file.write_all(json.as_bytes())?;
-        file.truncate().map_err(|e| anyhow::anyhow!("truncate {path}: {e:?}"))?;
+        file.truncate()
+            .map_err(|e| anyhow::anyhow!("truncate {tmp_path}: {e:?}"))?;
         file.flush()?;
     }
-    fs.flush(fs::Location::AppData).map_err(|e| anyhow::anyhow!("flush app data: {e:?}"))?;
+    match fs.rename(&tmp_path, &path, fs::Location::AppData) {
+        Ok(()) => {}
+        Err(fs::Error::FileAlreadyExists) => {
+            fs.remove(&path, fs::Location::AppData)
+                .map_err(|e| anyhow::anyhow!("remove existing {path}: {e:?}"))?;
+            fs.rename(&tmp_path, &path, fs::Location::AppData)
+                .map_err(|e| anyhow::anyhow!("rename {tmp_path} to {path}: {e:?}"))?;
+        }
+        Err(e) => anyhow::bail!("rename {tmp_path} to {path}: {e:?}"),
+    }
+    fs.flush(fs::Location::AppData)
+        .map_err(|e| anyhow::anyhow!("flush app data: {e:?}"))?;
     Ok(())
 }
 
@@ -1358,7 +1580,9 @@ fn sim_bridge_file(dir: &Path, filename: &str) -> Option<PathBuf> {
 }
 
 #[cfg(any(keyos, not(feature = "sim-bridge")))]
-fn sim_bridge_file(_dir: &Path, _filename: &str) -> Option<PathBuf> { None }
+fn sim_bridge_file(_dir: &Path, _filename: &str) -> Option<PathBuf> {
+    None
+}
 
 #[cfg(all(not(keyos), feature = "sim-bridge"))]
 fn write_bridge_file(dir: &Path, filename: &str, bytes: &[u8]) {
@@ -1397,14 +1621,20 @@ fn scan_address_qr() -> Option<String> {
 /// lowercase (bech32 is case-insensitive; derived addresses are lowercase).
 fn normalize_address(raw: &str) -> String {
     let s = raw.trim();
-    let s = s.strip_prefix("bitcoin:").or_else(|| s.strip_prefix("BITCOIN:")).unwrap_or(s);
+    let s = s
+        .strip_prefix("bitcoin:")
+        .or_else(|| s.strip_prefix("BITCOIN:"))
+        .unwrap_or(s);
     s.split('?').next().unwrap_or(s).trim().to_lowercase()
 }
 
 fn read_bytes_path_limited(path: &Path, max_bytes: u64, label: &str) -> anyhow::Result<Vec<u8>> {
     let meta = std::fs::metadata(path)?;
     if meta.len() > max_bytes {
-        anyhow::bail!("{label} file is too large ({} bytes, max {max_bytes})", meta.len());
+        anyhow::bail!(
+            "{label} file is too large ({} bytes, max {max_bytes})",
+            meta.len()
+        );
     }
     let file = std::fs::File::open(path)?;
     let mut bytes = Vec::with_capacity(meta.len() as usize);
@@ -1416,8 +1646,8 @@ fn read_bytes_path_limited(path: &Path, max_bytes: u64, label: &str) -> anyhow::
 }
 
 fn read_text_path_limited(path: &Path, max_bytes: u64, label: &str) -> anyhow::Result<String> {
-    Ok(String::from_utf8(read_bytes_path_limited(path, max_bytes, label)?)
-        .map_err(|_| anyhow::anyhow!("{label} file is not valid UTF-8"))?)
+    String::from_utf8(read_bytes_path_limited(path, max_bytes, label)?)
+        .map_err(|_| anyhow::anyhow!("{label} file is not valid UTF-8"))
 }
 
 fn read_bytes_fs_limited(
@@ -1427,15 +1657,30 @@ fn read_bytes_fs_limited(
     max_bytes: u64,
     label: &str,
 ) -> anyhow::Result<Vec<u8>> {
-    let meta = filesystem.metadata(path, location).map_err(|e| anyhow::anyhow!("metadata {path}: {e:?}"))?;
+    let meta = filesystem
+        .metadata(path, location)
+        .map_err(|e| anyhow::anyhow!("metadata {path}: {e:?}"))?;
     if meta.size > max_bytes {
-        anyhow::bail!("{label} file is too large ({} bytes, max {max_bytes})", meta.size);
+        anyhow::bail!(
+            "{label} file is too large ({} bytes, max {max_bytes})",
+            meta.size
+        );
     }
     let file = filesystem
-        .open_file(path, location, fs::OpenFlags { read: true, write: false, create: false })
+        .open_file(
+            path,
+            location,
+            fs::OpenFlags {
+                read: true,
+                write: false,
+                create: false,
+            },
+        )
         .map_err(|e| anyhow::anyhow!("open {path}: {e:?}"))?;
     let mut bytes = Vec::with_capacity(meta.size as usize);
-    file.take(max_bytes + 1).read_to_end(&mut bytes).map_err(|e| anyhow::anyhow!("read {path}: {e:?}"))?;
+    file.take(max_bytes + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| anyhow::anyhow!("read {path}: {e:?}"))?;
     if bytes.len() as u64 > max_bytes {
         anyhow::bail!("{label} file is too large (max {max_bytes})");
     }
@@ -1449,13 +1694,19 @@ fn read_text_fs_limited(
     max_bytes: u64,
     label: &str,
 ) -> anyhow::Result<String> {
-    Ok(String::from_utf8(read_bytes_fs_limited(filesystem, path, location, max_bytes, label)?)
-        .map_err(|_| anyhow::anyhow!("{label} file is not valid UTF-8"))?)
+    String::from_utf8(read_bytes_fs_limited(
+        filesystem, path, location, max_bytes, label,
+    )?)
+    .map_err(|_| anyhow::anyhow!("{label} file is not valid UTF-8"))
 }
 
 /// Is `target` an address derived from this policy's descriptor? Returns the
 /// path ("receive"/"change") and derivation index if found.
-fn verify_address_in_policy(descriptor_str: &str, target: &str, network: Network) -> Option<(String, u32)> {
+fn verify_address_in_policy(
+    descriptor_str: &str,
+    target: &str,
+    network: Network,
+) -> Option<(String, u32)> {
     let parsed = descriptor::import(descriptor_str).ok()?;
     let singles = parsed.descriptor.into_single_descriptors().ok()?;
     for (si, single) in singles.iter().enumerate() {
@@ -1515,8 +1766,8 @@ fn read_psbt_via_picker() -> anyhow::Result<Psbt> {
     let options = SelectFileOptions::default()
         .with_allowed_locations(AllowedLocations::All)
         .with_allowed_extensions(AllowedExtensions::specific(["psbt"]));
-    let result =
-        select_file::<GuiPermissions>(options).map_err(|e| anyhow::anyhow!("picker error: {e:?}"))?;
+    let result = select_file::<GuiPermissions>(options)
+        .map_err(|e| anyhow::anyhow!("picker error: {e:?}"))?;
     let Some(result) = result else {
         anyhow::bail!("cancelled");
     };
@@ -1568,15 +1819,20 @@ fn write_export(
             anyhow::anyhow!("open {dir}: {e:?}")
         }
     })?;
-    let unique =
-        directory.pick_next_filename(filename, None).map_err(|e| anyhow::anyhow!("pick filename: {e:?}"))?;
+    let unique = directory
+        .pick_next_filename(filename, None)
+        .map_err(|e| anyhow::anyhow!("pick filename: {e:?}"))?;
     let path = format!("{dir}/{unique}");
     {
         let mut file = filesystem
             .open_file(
                 path.clone(),
                 location,
-                fs::OpenFlags { read: false, write: true, create: true },
+                fs::OpenFlags {
+                    read: false,
+                    write: true,
+                    create: true,
+                },
             )
             .map_err(|e| anyhow::anyhow!("open {path}: {e:?}"))?;
         let mut written = 0usize;
@@ -1591,10 +1847,13 @@ fn write_export(
             written += n;
         }
         // Commit the directory entry (NOT done by FileSystem::flush alone).
-        file.flush().map_err(|e| anyhow::anyhow!("flush {path}: {e:?}"))?;
+        file.flush()
+            .map_err(|e| anyhow::anyhow!("flush {path}: {e:?}"))?;
     } // drop file -> CloseFile (re-commits the directory entry)
     drop(directory); // CloseDir
-    filesystem.flush(location).map_err(|e| anyhow::anyhow!("flush fs: {e:?}"))?;
+    filesystem
+        .flush(location)
+        .map_err(|e| anyhow::anyhow!("flush fs: {e:?}"))?;
     Ok(format!("{}{}", loc_label(location), path))
 }
 
@@ -1614,7 +1873,11 @@ fn export_via_picker(filename: &str, bytes: &[u8]) -> anyhow::Result<String> {
     };
     let dir = dir.trim_end_matches('/').to_string();
     // Picking a location root gives an empty path; tuck files into a `liana/` subdir.
-    let dir = if dir.is_empty() { EXPORT_DIR.to_string() } else { dir };
+    let dir = if dir.is_empty() {
+        EXPORT_DIR.to_string()
+    } else {
+        dir
+    };
     write_export(filename, bytes, map_location(loc), &dir)
 }
 
@@ -1631,8 +1894,8 @@ fn loc_label(loc: fs::Location) -> &'static str {
 /// its text contents. Used to import a Liana descriptor.
 fn import_via_picker() -> anyhow::Result<String> {
     let options = SelectFileOptions::default().with_allowed_locations(AllowedLocations::All);
-    let result =
-        select_file::<GuiPermissions>(options).map_err(|e| anyhow::anyhow!("picker error: {e:?}"))?;
+    let result = select_file::<GuiPermissions>(options)
+        .map_err(|e| anyhow::anyhow!("picker error: {e:?}"))?;
     let Some(result) = result else {
         anyhow::bail!("cancelled");
     };
@@ -1640,7 +1903,13 @@ fn import_via_picker() -> anyhow::Result<String> {
         anyhow::bail!("no file selected");
     };
     let filesystem = FileSystem::default();
-    read_text_fs_limited(&filesystem, &path, map_location(loc), MAX_DESCRIPTOR_BYTES, "descriptor")
+    read_text_fs_limited(
+        &filesystem,
+        &path,
+        map_location(loc),
+        MAX_DESCRIPTOR_BYTES,
+        "descriptor",
+    )
 }
 
 fn map_location(loc: PickLocation) -> fs::Location {
@@ -1683,13 +1952,23 @@ mod tests {
     fn real_liana_descriptor_parses_and_matches_checksum() {
         const REAL: &str = "wsh(or_d(pk([22663c8a/48'/1'/0'/2']tpubDDz15PcqAurpydRu3ZD7EB9nGRFEttDcbge8sPTqBo2fGXQkdoLjwAkoHjKFkqBFpkrZ8dS6DSDB5bG5EC5XcbJ5LuTRbgtgoCugm7puBAX/<0;1>/*),and_v(v:pkh([22663c8a/48'/1'/0'/2']tpubDDz15PcqAurpydRu3ZD7EB9nGRFEttDcbge8sPTqBo2fGXQkdoLjwAkoHjKFkqBFpkrZ8dS6DSDB5bG5EC5XcbJ5LuTRbgtgoCugm7puBAX/<2;3>/*),older(52596))))#9xtyycfv";
         let parsed = descriptor::import(REAL).expect("real Liana descriptor imports");
-        assert_eq!(parsed.checksum, "9xtyycfv", "our checksum must match Liana's");
+        assert_eq!(
+            parsed.checksum, "9xtyycfv",
+            "our checksum must match Liana's"
+        );
         let fp = Fingerprint::from_str("22663c8a").unwrap();
         let reg = policy::build_registered_policy("real", "Real", "signet", &parsed, fp).unwrap();
         assert_eq!(reg.paths.len(), 2);
-        let recovery = reg.paths.iter().find(|p| matches!(p.kind, SpendPathKind::Recovery)).unwrap();
+        let recovery = reg
+            .paths
+            .iter()
+            .find(|p| matches!(p.kind, SpendPathKind::Recovery))
+            .unwrap();
         assert_eq!(recovery.relative_timelock_blocks, Some(52596));
-        assert!(reg.signers.iter().all(|s| s.fingerprint == "22663c8a" && s.owned_by_passport));
+        assert!(reg
+            .signers
+            .iter()
+            .all(|s| s.fingerprint == "22663c8a" && s.owned_by_passport));
     }
 
     #[test]
@@ -1700,8 +1979,13 @@ mod tests {
         let parsed = descriptor::import(&desc).expect("imports");
         let paths = policy::analyze_paths(&parsed.descriptor).expect("analyze");
         assert_eq!(paths.len(), 2);
-        assert!(paths.iter().any(|p| matches!(p.kind, SpendPathKind::Primary)));
-        let rec = paths.iter().find(|p| matches!(p.kind, SpendPathKind::Recovery)).unwrap();
+        assert!(paths
+            .iter()
+            .any(|p| matches!(p.kind, SpendPathKind::Primary)));
+        let rec = paths
+            .iter()
+            .find(|p| matches!(p.kind, SpendPathKind::Recovery))
+            .unwrap();
         assert_eq!(rec.relative_timelock_blocks, Some(RECOVERY_BLOCKS));
     }
 
@@ -1723,19 +2007,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn descriptor_without_checksum_is_rejected() {
+        let (secp, xpub, fp) = device();
+        let desc = sample_descriptor(&secp, &xpub, fp);
+        let without_checksum = desc.rsplit_once('#').map(|(body, _)| body).unwrap_or(&desc);
+        let err = import_error(without_checksum);
+        assert!(err.contains("checksum is required"), "got: {err}");
+    }
+
     // A decaying policy (primary + two recovery tiers at different timelocks)
     // must flatten into three distinct spend paths, not merge the nested
     // recovery branches into one.
     #[test]
     fn decaying_policy_flattens_into_distinct_tiers() {
         let (a, b, c) = (test_key(0x21), test_key(0x22), test_key(0x23));
-        let desc = format!(
+        let desc = descriptor_with_checksum(&format!(
             "wsh(or_d(pk({a}/<0;1>/*),or_i(and_v(v:pkh({b}/<0;1>/*),older(1000)),and_v(v:pkh({c}/<0;1>/*),older(2000)))))"
-        );
+        ));
         let parsed = descriptor::import(&desc).expect("decaying descriptor imports");
         let paths = policy::analyze_paths(&parsed.descriptor).expect("analyze");
         assert_eq!(paths.len(), 3, "primary + 2 recovery tiers");
-        assert_eq!(paths.iter().filter(|p| matches!(p.kind, SpendPathKind::Primary)).count(), 1);
+        assert_eq!(
+            paths
+                .iter()
+                .filter(|p| matches!(p.kind, SpendPathKind::Primary))
+                .count(),
+            1
+        );
         let mut tls: Vec<u32> = paths
             .iter()
             .filter(|p| matches!(p.kind, SpendPathKind::Recovery))
@@ -1750,7 +2049,9 @@ mod tests {
     #[test]
     fn taproot_liana_descriptor_is_rejected_for_now() {
         let (a, b) = (test_key(0x31), test_key(0x32));
-        let desc = format!("tr({a}/<0;1>/*,and_v(v:pk({b}/<0;1>/*),older(4032)))");
+        let desc = descriptor_with_checksum(&format!(
+            "tr({a}/<0;1>/*,and_v(v:pk({b}/<0;1>/*),older(4032)))"
+        ));
         let err = import_error(&desc);
         assert!(err.contains("Taproot"), "got: {err}");
     }
@@ -1758,7 +2059,7 @@ mod tests {
     #[test]
     fn absolute_timelock_descriptor_is_rejected_for_now() {
         let a = test_key(0x33);
-        let desc = format!("wsh(and_v(v:pk({a}/<0;1>/*),after(100)))");
+        let desc = descriptor_with_checksum(&format!("wsh(and_v(v:pk({a}/<0;1>/*),after(100)))"));
         let err = import_error(&desc);
         assert!(err.contains("absolute locktimes"), "got: {err}");
     }
@@ -1767,8 +2068,9 @@ mod tests {
     fn time_based_csv_descriptor_is_rejected_for_now() {
         let (a, b) = (test_key(0x34), test_key(0x35));
         let time_based_csv = (1 << 22) + 144;
-        let desc =
-            format!("wsh(or_d(pk({a}/<0;1>/*),and_v(v:pkh({b}/<0;1>/*),older({time_based_csv}))))");
+        let desc = descriptor_with_checksum(&format!(
+            "wsh(or_d(pk({a}/<0;1>/*),and_v(v:pkh({b}/<0;1>/*),older({time_based_csv}))))"
+        ));
         let err = import_error(&desc);
         assert!(err.contains("block-based"), "got: {err}");
     }
@@ -1780,7 +2082,10 @@ mod tests {
         // Exactly one signer, the device, owns a key.
         let owned = reg.signers.iter().filter(|s| s.owned_by_passport).count();
         assert_eq!(owned, 1);
-        assert!(reg.signers.iter().any(|s| s.fingerprint == fp.to_string() && s.owned_by_passport));
+        assert!(reg
+            .signers
+            .iter()
+            .any(|s| s.fingerprint == fp.to_string() && s.owned_by_passport));
     }
 
     #[test]
@@ -1793,15 +2098,70 @@ mod tests {
         assert!(m.matched, "demo PSBT must match the seeded policy");
         assert_eq!(m.active_path, Some(SpendPathKind::Primary));
         assert!(m.passport_can_sign);
+        assert_eq!(m.expected_signatures, 1);
 
         // The decision gate must allow, and signing must finalize.
         assert!(matches!(
             signing::decide(&m, &reg),
-            signing::SignDecision::Allow { path: SpendPathKind::Primary, .. }
+            signing::SignDecision::Allow {
+                path: SpendPathKind::Primary,
+                ..
+            }
         ));
         let master = Xpriv::new_master(DEFAULT_NETWORK, &[0x11; 32]).unwrap();
-        let finalized = signing::sign_and_finalize(psbt, &master, &secp).expect("sign");
+        let finalized =
+            signing::sign_and_finalize(psbt, &master, &secp, m.expected_signatures).expect("sign");
         assert!(finalized.inputs[0].final_script_witness.is_some());
+    }
+
+    fn add_second_policy_input_without_passport_derivation(psbt: &mut Psbt) {
+        let mut second_input = psbt.inputs[0].clone();
+        second_input.bip32_derivation.clear();
+        psbt.unsigned_tx.input.push(TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000002",
+                )
+                .unwrap(),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: Witness::new(),
+        });
+        psbt.inputs.push(second_input);
+    }
+
+    #[test]
+    fn psbt_with_passport_derivation_on_only_some_inputs_is_not_signable() {
+        let (secp, xpub, fp) = device();
+        let reg = seed_sample(&secp, &xpub, fp).unwrap();
+        let mut psbt = build_owner_psbt(&secp, &reg, &xpub, fp).expect("psbt");
+        add_second_policy_input_without_passport_derivation(&mut psbt);
+
+        let m = lpsbt::match_psbt(&psbt, &reg, fp, GAP).expect("match");
+        assert!(m.matched, "both inputs belong to the registered policy");
+        assert_eq!(m.passport_derivation_inputs, 1);
+        assert_eq!(m.expected_signatures, 2);
+        assert!(
+            !m.passport_can_sign,
+            "partial Passport derivations must block signing"
+        );
+        assert!(
+            m.reasons.iter().any(|r| r.contains("1 of 2")),
+            "{:?}",
+            m.reasons
+        );
+        assert!(matches!(
+            signing::decide(&m, &reg),
+            signing::SignDecision::Refuse(_)
+        ));
+
+        let master = Xpriv::new_master(DEFAULT_NETWORK, &[0x11; 32]).unwrap();
+        let err = signing::sign(psbt, &master, &secp, m.expected_signatures)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("1 of 2"), "got: {err}");
     }
 
     #[test]
@@ -1812,10 +2172,19 @@ mod tests {
         psbt.unsigned_tx.output[0].value = Amount::from_sat(110_000);
 
         let m = lpsbt::match_psbt(&psbt, &reg, fp, GAP).expect("match");
-        assert!(m.matched, "the script still belongs to the registered policy");
+        assert!(
+            m.matched,
+            "the script still belongs to the registered policy"
+        );
         assert!(!m.passport_can_sign, "invalid amounts must block signing");
-        assert!(m.reasons.iter().any(|r| r.contains("outputs exceed verified inputs")));
-        assert!(matches!(signing::decide(&m, &reg), signing::SignDecision::Refuse(_)));
+        assert!(m
+            .reasons
+            .iter()
+            .any(|r| r.contains("outputs exceed verified inputs")));
+        assert!(matches!(
+            signing::decide(&m, &reg),
+            signing::SignDecision::Refuse(_)
+        ));
     }
 
     #[test]
@@ -1828,8 +2197,13 @@ mod tests {
         let psbt = build_owner_psbt(&secp, &reg, &xpub, fp).expect("psbt");
         let policies = vec![reg, duplicate];
 
-        let err = lpsbt::match_against_all(&psbt, &policies, fp, GAP).unwrap_err().to_string();
-        assert!(err.contains("more than one registered policy"), "got: {err}");
+        let err = lpsbt::match_against_all(&psbt, &policies, fp, GAP)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("more than one registered policy"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -1840,9 +2214,16 @@ mod tests {
         psbt.inputs[0].sighash_type = Some(EcdsaSighashType::Single.into());
 
         let m = lpsbt::match_psbt(&psbt, &reg, fp, GAP).expect("match");
-        assert!(m.matched, "the script still belongs to the registered policy");
+        assert!(
+            m.matched,
+            "the script still belongs to the registered policy"
+        );
         assert!(!m.passport_can_sign, "unsafe sighash must block signing");
-        assert!(m.reasons.iter().any(|r| r.contains("unsupported sighash")), "{:?}", m.reasons);
+        assert!(
+            m.reasons.iter().any(|r| r.contains("unsupported sighash")),
+            "{:?}",
+            m.reasons
+        );
     }
 
     #[test]
@@ -1853,9 +2234,19 @@ mod tests {
         psbt.inputs[0].witness_script = Some(ScriptBuf::from_hex("51").unwrap());
 
         let m = lpsbt::match_psbt(&psbt, &reg, fp, GAP).expect("match");
-        assert!(m.matched, "the scriptPubKey still belongs to the registered policy");
-        assert!(!m.passport_can_sign, "mismatched witness_script must block signing");
-        assert!(m.reasons.iter().any(|r| r.contains("witness_script")), "{:?}", m.reasons);
+        assert!(
+            m.matched,
+            "the scriptPubKey still belongs to the registered policy"
+        );
+        assert!(
+            !m.passport_can_sign,
+            "mismatched witness_script must block signing"
+        );
+        assert!(
+            m.reasons.iter().any(|r| r.contains("witness_script")),
+            "{:?}",
+            m.reasons
+        );
     }
 
     #[test]
@@ -1872,9 +2263,19 @@ mod tests {
         });
 
         let m = lpsbt::match_psbt(&psbt, &reg, fp, GAP).expect("match");
-        assert!(m.matched, "the witness_utxo still belongs to the registered policy");
-        assert!(!m.passport_can_sign, "inconsistent non_witness_utxo must block signing");
-        assert!(m.reasons.iter().any(|r| r.contains("non_witness_utxo")), "{:?}", m.reasons);
+        assert!(
+            m.matched,
+            "the witness_utxo still belongs to the registered policy"
+        );
+        assert!(
+            !m.passport_can_sign,
+            "inconsistent non_witness_utxo must block signing"
+        );
+        assert!(
+            m.reasons.iter().any(|r| r.contains("non_witness_utxo")),
+            "{:?}",
+            m.reasons
+        );
     }
 
     #[test]
@@ -1886,9 +2287,19 @@ mod tests {
         psbt.unsigned_tx.input[0].sequence = Sequence::from_height(RECOVERY_BLOCKS as u16);
 
         let m = lpsbt::match_psbt(&psbt, &reg, fp, GAP).expect("match");
-        assert!(m.matched, "the input still belongs to the registered policy");
-        assert!(!m.passport_can_sign, "BIP68-disabled recovery spend must block signing");
-        assert!(m.reasons.iter().any(|r| r.contains("version 2")), "{:?}", m.reasons);
+        assert!(
+            m.matched,
+            "the input still belongs to the registered policy"
+        );
+        assert!(
+            !m.passport_can_sign,
+            "BIP68-disabled recovery spend must block signing"
+        );
+        assert!(
+            m.reasons.iter().any(|r| r.contains("version 2")),
+            "{:?}",
+            m.reasons
+        );
     }
 
     #[test]
@@ -1898,11 +2309,30 @@ mod tests {
     }
 
     #[test]
+    fn network_detection_rejects_mixed_extended_key_families() {
+        assert_eq!(
+            network_from_descriptor("wsh(pk(xpubabc))").unwrap(),
+            Network::Bitcoin
+        );
+        assert_eq!(
+            network_from_descriptor("wsh(pk(tpubabc))").unwrap(),
+            Network::Signet
+        );
+
+        let mixed = network_from_descriptor("wsh(sortedmulti(2,xpubabc,tpubabc))")
+            .unwrap_err()
+            .to_string();
+        assert!(mixed.contains("mixes mainnet and testnet"), "got: {mixed}");
+    }
+
+    #[test]
     fn register_descriptor_rejects_policy_without_passport_key() {
         let (secp, xpub, fp) = device();
         let desc = sample_descriptor(&secp, &xpub, fp);
         let wrong_fp = Fingerprint::from_str("deadbeef").unwrap();
-        let err = register_descriptor(&desc, wrong_fp).unwrap_err().to_string();
+        let err = register_descriptor(&desc, wrong_fp)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("does not contain this Passport"), "got: {err}");
     }
 
@@ -1916,9 +2346,18 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         save_policy(&dir, &reg).expect("save");
+        let saved =
+            std::fs::read_to_string(dir.join(format!("policy_{}.json", reg.descriptor_checksum)))
+                .unwrap();
+        assert!(saved.contains("\"schema_version\": 1"), "got: {saved}");
         let store = load_policies(&dir);
         assert_eq!(store.len(), 1);
         assert!(store.find_by_checksum(&reg.descriptor_checksum).is_some());
+
+        let mut legacy: serde_json::Value = serde_json::from_str(&saved).unwrap();
+        legacy.as_object_mut().unwrap().remove("schema_version");
+        let loaded_legacy = store::from_json(&serde_json::to_string(&legacy).unwrap()).unwrap();
+        assert_eq!(loaded_legacy.schema_version, liana::POLICY_SCHEMA_VERSION);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

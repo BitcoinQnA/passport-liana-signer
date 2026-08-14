@@ -96,8 +96,10 @@ export enum TrId {
     RenameSaveName,
     RenameTitle,
     ReviewActivePath,
+    ReviewBlockedReason,
     ReviewCantSignTitle,
     ReviewChangeOutput,
+    ReviewHighFeeWarning,
     ReviewLoadingDetail,
     ReviewLoadingTitle,
     ReviewNetworkFee,
@@ -158,4 +160,3 @@ export global TR2 {
     pure callback lookup-str(id: string) -> string;
     pure callback format(id: TrId, args: [string]) -> string;
 }
-

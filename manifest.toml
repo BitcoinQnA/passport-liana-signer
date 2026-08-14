@@ -1,4 +1,5 @@
 # appId = ASCII "liana-signer-app" (exactly 16 bytes / 0x + 32 hex).
+manifestVersion = "0"
 appId = "0x6c69616e612d7369676e65722d617070"
 
 [appName]

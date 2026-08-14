@@ -4,7 +4,9 @@
 use super::descriptor::ParsedDescriptor;
 use super::miniscript::policy::{Liftable, Semantic};
 use super::miniscript::{Descriptor, DescriptorPublicKey, ForEachKey};
-use super::{Error, PolicySigner, RegisteredPolicy, Result, SpendPath, SpendPathKind};
+use super::{
+    Error, PolicySigner, RegisteredPolicy, Result, SpendPath, SpendPathKind, POLICY_SCHEMA_VERSION,
+};
 
 type Sem = Semantic<DescriptorPublicKey>;
 
@@ -135,6 +137,7 @@ pub fn build_registered_policy(
     let paths = analyze_paths(&parsed.descriptor)?;
     let signers = signers(&parsed.descriptor, passport_fp);
     Ok(RegisteredPolicy {
+        schema_version: POLICY_SCHEMA_VERSION,
         id: id.into(),
         name: name.into(),
         network: network.into(),

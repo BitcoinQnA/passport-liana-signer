@@ -21,6 +21,13 @@ pub struct MatchResult {
     /// Passport owns a key on the active path AND that key is in the PSBT's
     /// bip32 derivations (i.e. we can actually contribute a signature).
     pub passport_can_sign: bool,
+    /// Number of PSBT inputs that reference Passport's fingerprint in their
+    /// bip32 derivations.
+    pub passport_derivation_inputs: usize,
+    /// Minimum number of signatures Passport is expected to add for this PSBT.
+    /// For the supported Liana P2WSH flow this is one signature per input when
+    /// Passport owns the active path.
+    pub expected_signatures: usize,
     pub matched_inputs: usize,
     pub total_inputs: usize,
     /// Human-readable notes for the signing-review screen / debugging.
@@ -81,6 +88,8 @@ pub fn match_psbt(
             active_path: None,
             active_timelock_blocks: None,
             passport_can_sign: false,
+            passport_derivation_inputs: 0,
+            expected_signatures: 0,
             matched_inputs,
             total_inputs,
             reasons,
@@ -94,6 +103,8 @@ pub fn match_psbt(
             active_path: None,
             active_timelock_blocks: None,
             passport_can_sign: false,
+            passport_derivation_inputs: 0,
+            expected_signatures: 0,
             matched_inputs,
             total_inputs,
             reasons,
@@ -122,6 +133,8 @@ pub fn match_psbt(
             active_path: None,
             active_timelock_blocks: None,
             passport_can_sign: false,
+            passport_derivation_inputs: 0,
+            expected_signatures: 0,
             matched_inputs,
             total_inputs,
             reasons,
@@ -139,6 +152,8 @@ pub fn match_psbt(
                     active_path: None,
                     active_timelock_blocks: None,
                     passport_can_sign: false,
+                    passport_derivation_inputs: 0,
+                    expected_signatures: 0,
                     matched_inputs,
                     total_inputs,
                     reasons,
@@ -150,15 +165,19 @@ pub fn match_psbt(
         None => (SpendPathKind::Primary, None),
     };
 
-    // The PSBT must reference Passport's key in segwit-v0 bip32 origins, and
-    // Passport must own a key on a path that is spendable *right now* — the
-    // primary path always, plus any recovery tier the nSequence has unlocked. A
-    // key on a not-yet-matured tier cannot sign.
-    let passport_in_psbt = psbt.inputs.iter().any(|inp| {
-        inp.bip32_derivation
-            .values()
-            .any(|(fp, _)| *fp == passport_fp)
-    });
+    // The PSBT must reference Passport's key in segwit-v0 bip32 origins on
+    // every policy input, and Passport must own a key on the active path. A key
+    // on a not-yet-matured tier cannot sign, and a PSBT that references Passport
+    // for only some inputs must be refused instead of partially signed.
+    let passport_derivation_inputs = psbt
+        .inputs
+        .iter()
+        .filter(|inp| {
+            inp.bip32_derivation
+                .values()
+                .any(|(fp, _)| *fp == passport_fp)
+        })
+        .count();
     let fp_str = passport_fp.to_string();
     let owns_active_key = policy.paths.iter().any(|p| {
         let active = match (active_path, p.kind) {
@@ -170,12 +189,14 @@ pub fn match_psbt(
         };
         active && p.signer_fingerprints.contains(&fp_str)
     });
-    let passport_can_sign = passport_in_psbt && owns_active_key;
-    if !passport_can_sign {
-        reasons.push(
-            "Passport key is not on a currently-spendable path (or not referenced by the PSBT)"
-                .into(),
-        );
+    let expected_signatures = if owns_active_key { total_inputs } else { 0 };
+    let passport_can_sign = owns_active_key && passport_derivation_inputs == expected_signatures;
+    if !owns_active_key {
+        reasons.push("Passport key is not on the active spend path".into());
+    } else if passport_derivation_inputs != expected_signatures {
+        reasons.push(format!(
+            "Passport key is referenced by {passport_derivation_inputs} of {expected_signatures} policy inputs; refusing partial signing"
+        ));
     }
 
     Ok(MatchResult {
@@ -183,6 +204,8 @@ pub fn match_psbt(
         active_path: Some(active_path),
         active_timelock_blocks,
         passport_can_sign,
+        passport_derivation_inputs,
+        expected_signatures,
         matched_inputs,
         total_inputs,
         reasons,
