@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { ButtonSection, AppHeader, TextLg, TextMd, TextSm, BasePage,
-         ScrollBody, IconButton } from "@ui/widgets.slint";
+         ScrollBody, IconButton, DynamicQrCode } from "@ui/widgets.slint";
 import { Importance, Palette, Size } from "@ui/theme.slint";
 import { Callbacks } from "../../callbacks.slint";
 import { XpubSavePageProps } from "./props.slint";
@@ -39,6 +39,10 @@ export component XpubSavePagePage inherits Rectangle {
                         wrap: word-wrap;
                     }
 
+                    DynamicQrCode {
+                        get-parts(density) => { Callbacks.xpub-qr-parts(density); }
+                    }
+
                     TextSm { text: TR2.lookup(TrId.XpubSaveKeyLabel); color: Palette.content-tertiary; }
                     TextLg { text: Callbacks.xpub-fingerprint; color: Liana.green; bold: true; }
                     LianaCard {
@@ -63,7 +67,7 @@ export component XpubSavePagePage inherits Rectangle {
                 padding-bottom: Size.sz6;
                 LianaButton {
                     label: TR2.lookup(TrId.XpubSaveSaveKeyToFile);
-                    primary: true;
+                    primary: false;
                     clicked => {
                         Callbacks.export-key-file();
                         if Callbacks.export-ok { Navigate.export-done-page({ }); }

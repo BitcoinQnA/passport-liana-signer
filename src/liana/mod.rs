@@ -21,11 +21,12 @@ pub mod policy;
 pub mod psbt;
 pub mod signing;
 pub mod store;
+pub mod transport;
 
 use serde::{Deserialize, Serialize};
 
 pub type Result<T> = std::result::Result<T, Error>;
-pub const POLICY_SCHEMA_VERSION: u32 = 1;
+pub const POLICY_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
@@ -69,6 +70,16 @@ pub struct RegisteredPolicy {
     pub network: String,
     pub descriptor: String,
     pub descriptor_checksum: String,
+    /// Foundation's canonical Passport wallet-policy identity. Empty only for
+    /// legacy records that have not yet been migrated from their descriptor.
+    #[serde(default)]
+    pub policy_id: String,
+    /// Canonical BIP388-style template and key vector used to bind QR address
+    /// requests to this exact registered policy.
+    #[serde(default)]
+    pub policy_template: String,
+    #[serde(default)]
+    pub policy_keys: Vec<String>,
     pub policy_fingerprint: String,
     pub signers: Vec<PolicySigner>,
     pub paths: Vec<SpendPath>,

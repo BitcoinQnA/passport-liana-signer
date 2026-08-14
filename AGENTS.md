@@ -16,7 +16,7 @@ Two ways to get a workspace, in order of preference:
    ```bash
    curl -fsSL https://foundation.xyz/sdk/install.sh | sh
    ```
-   (Supported hosts: Apple Silicon macOS and Linux x86_64. The installer verifies a GPG signature and installs to `~/.foundation/sdk/`.) The CLI scaffolds an SDK project and opens the dev shell. Note as of this writing its `build` / `sim` / `sideload` subcommands are still maturing (`foundation new` and `foundation develop` work); check `foundation --help` for current status. See [`SDK-SETUP.md`](SDK-SETUP.md).
+   (Supported hosts: Apple Silicon macOS and Linux x86_64. The installer verifies a GPG signature and installs to `~/.foundation/sdk/`.) SDK 0.4.0 provides `build`, `sim`, and USB-debug `sideload`; check `foundation --help` for the installed surface. See [`SDK-SETUP.md`](SDK-SETUP.md).
 2. **KeyOS source checkout** — clone the KeyOS repo and drop this app in at `apps/gui-app-liana-signer/`, register it in the launcher + workspace, then use `cargo xtask`. KeyOS is Foundation's OS and is not public; this route needs access.
 
 If neither is available, the useful things an agent can still do here: read and explain the code, run the host unit tests (below), and edit the Rust/Slint sources.
@@ -26,7 +26,7 @@ If neither is available, the useful things an agent can still do here: read and 
 - `src/liana/` — host-testable Bitcoin logic: `descriptor` (parse/import), `policy` (spend-path model), `psbt` (match + active path), `signing` (the security gate + sign), `store` (persistence).
 - `src/main.rs` — the app shell: Slint callbacks, the export/import file flows, device key wiring (app seed to master `Xpriv` to a BIP48 account).
 - `ui/` — Slint UI. Pages live in `ui/pages/<name>/{props.slint,page.slint}`; `build.rs` generates the router in `ui/gen/*` from each page's `@rust-attr(route(...))`. To add a screen, add a `pages/<name>/` folder and rebuild.
-- `manifest.toml` — the SDK app manifest (identity + permissions). `appId` must be exactly 16 bytes (`0x` + 32 hex).
+- `app-config.toml` — the SDK source of truth for identity, version, publisher, and permissions. `manifest.toml` is its compile-time compatibility output. `app-id` must be exactly 16 bytes (`0x` + 32 hex).
 - `i18n/en.json` — user-facing strings, referenced as `TR2.lookup(TrId.Xxx)` in Slint.
 
 ## Commands
@@ -56,7 +56,7 @@ To exercise signing against Liana desktop on the same machine, build the hosted 
 ## Conventions and gotchas
 
 - **Signing is gated** (`src/liana/signing.rs`): never loosen it to sign an unmatched policy or a path the device does not own. That gate is the point of the app.
-- **File exports** write to the user's chosen location via the picker and must **close the file before the filesystem flush** (`write_export` in `src/main.rs`) so the FAT directory entry commits; do not "simplify" that ordering away.
+- **File exports** write through the picker and must call file-level `Flush` before `CloseFile` (`write_export` in `src/main.rs`) so the FAT directory entry commits. Do not add `FileSystem::flush`: its `FlushFs` permission is Foundation-only in current KeyOS and public SDK apps are denied it.
 - When testing exports to a microSD on macOS, disable Spotlight on the card (`touch /Volumes/<CARD>/.metadata_never_index`) — Spotlight indexing can corrupt a removable FAT card and produce misleading results.
 - No em dashes in user-facing copy.
 - License is GPL-3.0-or-later; keep the SPDX headers on new source files.

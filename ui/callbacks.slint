@@ -68,6 +68,7 @@ export global Callbacks {
     in-out property <string> xpub-path: "";
     in-out property <string> xpub-value: "";
     in-out property <string> xpub-network: "signet";
+    in-out property <string> xpub-account: "0";
 
     // -- Shared export result (xpub key + descriptor) -----------------------
     in-out property <bool> export-ok: false;        // last export succeeded -> show success screen
@@ -81,6 +82,7 @@ export global Callbacks {
     in-out property <string> verify-title: "";
     in-out property <string> verify-addr: "";
     in-out property <string> verify-detail: "";
+    in-out property <bool> verify-has-response: false;
 
     // -- Status banner ------------------------------------------------------
     in-out property <string> status: "";
@@ -112,7 +114,11 @@ export global Callbacks {
     callback export-descriptor(string /* checksum id */);
     callback export-xpub();
     callback set-xpub-network(string /* bitcoin | signet */);
+    callback set-xpub-account(string /* BIP48 account index */);
     callback export-key-file(); // save the signer key to a chosen location
+    pure callback xpub-qr-parts(int /* density */) -> [string];
     callback approve();
     callback export-signed(); // save the signed PSBT to a chosen location
+    pure callback signed-psbt-qr-parts(int /* density */) -> [string];
+    pure callback address-response-qr-parts(int /* density */) -> [string];
 }

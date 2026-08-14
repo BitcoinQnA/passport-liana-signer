@@ -4,7 +4,7 @@ A policy-aware [Liana](https://wizardsardine.com/liana/) Miniscript signer that 
 
 Liana stays the wallet and builds the transaction. Passport registers the wallet's descriptor and will only ever sign a PSBT that genuinely matches a registered policy and spends through a path this device holds a key for. Verified end to end on real hardware: signed signet transactions through a Miniscript policy and broadcast them.
 
-> Proof-of-concept. The code is a KeyOS application (Rust + Slint); it builds inside a KeyOS workspace, not standalone (see [Building](#building)).
+> The code is a KeyOS application (Rust + Slint); host and device builds require the Foundation SDK or a KeyOS workspace (see [Building](#building)).
 
 ## Screenshots
 
@@ -15,11 +15,11 @@ _Add device captures to `docs/screenshots/`._
 
 ## What it does
 
-- **Connect to Liana** — export this Passport's public key (with a network selector) to set up the wallet in Liana.
-- **Import policy** — load the finished descriptor back to Passport through a guided review: a plain-language explainer, then the spend paths and keys laid out visually, then confirm. Name the wallet so multiple policies stay distinguishable.
-- **Verify address** — scan a receive address and confirm it derives from a registered wallet.
-- **Sign** — match a PSBT against your registered policies, show the active spend path, and slide to sign. Signing is gated: it only unlocks when the PSBT matches and Passport owns a key on a path that is spendable now.
-- **Export** — write the signed PSBT (or the key / descriptor) to microSD, USB, internal storage, or Airlock via a file picker; the descriptor can also be shown as a QR code.
+- **Connect to Liana** — show the selected BIP48 account as `ur:crypto-account`, with binary-file fallback and Signet/mainnet account selection.
+- **Import policy** — scan Liana's versioned `ur:bytes` wallet-policy registration and review its spend paths and complete keys before saving it.
+- **Verify address** — answer Liana's policy-bound `ur:bytes` request with an independently derived address response.
+- **Sign** — scan `ur:crypto-psbt`, match every input against a registered policy, review outputs and the active path, then slide to sign.
+- **Return to Liana** — show the signed PSBT as `ur:crypto-psbt`, or write a binary BIP174 `.psbt` file when it is too large for QR.
 - **Manage** — archive, restore, rename, and delete policies, with destructive actions behind a dedicated confirmation screen.
 
 ## Spend paths
@@ -55,7 +55,7 @@ The short version:
    ```bash
    curl -fsSL https://foundation.xyz/sdk/install.sh | sh   # Apple Silicon macOS or Linux x86_64
    ```
-   (Its `sim` / `build` / `sideload` commands are still maturing; see [`SDK-SETUP.md`](SDK-SETUP.md).) Alternatively, drop this app into a KeyOS source checkout at `apps/gui-app-liana-signer/`.
+   SDK 0.4.0 supports simulator, signed bundle, and USB-debug sideload workflows; see [`SDK-SETUP.md`](SDK-SETUP.md). Alternatively, place the app at `apps/gui-app-liana-signer/` in a KeyOS checkout.
 2. **Run it.** From the workspace root:
    ```bash
    cargo test -p gui-app-liana-signer     # host unit tests
@@ -67,7 +67,7 @@ Integrating into a KeyOS workspace also touches a few shared files outside this 
 
 ## Status
 
-Proof-of-concept, validated on a Passport Prime dev unit: import policy, verify address, sign, export to SD, then finalize and broadcast in Liana (signet).
+The policy/signing logic and Passport/Liana QR protocol are regression-tested against the Passport Core and Liana desktop fixtures. P2WSH Signet and mainnet are supported; Taproot remains intentionally disabled pending an `ngwallet` signing implementation and full fixtures.
 
 ## License
 

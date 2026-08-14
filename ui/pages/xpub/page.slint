@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { ButtonSection, AppHeader, TextLg, TextMd, TextSm, BasePage,
-         ScrollBody, IconButton } from "@ui/widgets.slint";
+         ScrollBody, IconButton, TitledInput } from "@ui/widgets.slint";
 import { Importance, Palette, Size } from "@ui/theme.slint";
 import { Callbacks } from "../../callbacks.slint";
 import { XpubPageProps } from "./props.slint";
@@ -75,6 +75,15 @@ export component XpubPagePage inherits Rectangle {
                             primary: Callbacks.xpub-network == "bitcoin";
                             clicked => { Callbacks.set-xpub-network("bitcoin"); }
                         }
+                    }
+                    TitledInput {
+                        title: TR2.lookup(TrId.XpubAccount);
+                        text: Callbacks.xpub-account;
+                        input-type: InputType.number;
+                        bounded-number: true;
+                        minimum: "0";
+                        maximum: "2147483647";
+                        edited(value) => { Callbacks.set-xpub-account(value); }
                     }
                     Step {
                         number: "1";

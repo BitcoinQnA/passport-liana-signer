@@ -3,7 +3,7 @@
 
 [package]
 name = "gui-app-liana-signer"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Foundation Devices, Inc. <hello@foundation.xyz>"]
 license = "GPL-3.0-or-later"
@@ -32,6 +32,8 @@ slint-keyos-platform = { path = "../../slint-keyos-platform/runtime" }
 anyhow = "1"
 base64 = "0.22"
 hex = "0.4"
+foundation-urtypes = { workspace = true }
+minicbor = { version = "0.24", features = ["std", "derive"] }
 
 # Descriptor/policy/PSBT/signing logic lives in src/liana/, built on ngwallet's
 # bitcoin + miniscript so it compiles for BOTH the host simulator and the

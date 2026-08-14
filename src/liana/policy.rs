@@ -13,10 +13,16 @@ type Sem = Semantic<DescriptorPublicKey>;
 /// Analyze the spend paths of a (possibly multipath) descriptor.
 pub fn analyze_paths(desc: &Descriptor<DescriptorPublicKey>) -> Result<Vec<SpendPath>> {
     // Lift the receive-path (index 0) single descriptor to a semantic policy.
-    let singles =
-        desc.clone().into_single_descriptors().map_err(|e| Error::Parse(format!("multipath split: {e}")))?;
-    let first = singles.first().ok_or_else(|| Error::Parse("descriptor produced no paths".into()))?;
-    let policy = first.lift().map_err(|e| Error::Parse(format!("lift to policy: {e}")))?;
+    let singles = desc
+        .clone()
+        .into_single_descriptors()
+        .map_err(|e| Error::Parse(format!("multipath split: {e}")))?;
+    let first = singles
+        .first()
+        .ok_or_else(|| Error::Parse("descriptor produced no paths".into()))?;
+    let policy = first
+        .lift()
+        .map_err(|e| Error::Parse(format!("lift to policy: {e}")))?;
 
     // Flatten the OR-disjunction tree into individual spend branches. A
     // decaying policy nests its recovery tiers (`or_d(primary, or_d(rec1,
@@ -53,7 +59,11 @@ fn analyze_branch(sem: &Sem) -> SpendPath {
     let fingerprints = collect_keys(sem);
     let (threshold, total) = key_threshold(sem);
     SpendPath {
-        kind: if older.is_some() { SpendPathKind::Recovery } else { SpendPathKind::Primary },
+        kind: if older.is_some() {
+            SpendPathKind::Recovery
+        } else {
+            SpendPathKind::Primary
+        },
         threshold,
         total_keys: total,
         relative_timelock_blocks: older,
@@ -83,13 +93,23 @@ fn key_threshold(sem: &Sem) -> (usize, usize) {
         Semantic::Key(_) => (1, 1),
         Semantic::Thresh(t) => {
             let children: Vec<&Sem> = t.iter().map(|a| a.as_ref()).collect();
-            let key_children = children.iter().filter(|c| matches!(c, Semantic::Key(_))).count();
-            let timelock_slots =
-                children.iter().filter(|c| matches!(c, Semantic::Older(_) | Semantic::After(_))).count();
+            let key_children = children
+                .iter()
+                .filter(|c| matches!(c, Semantic::Key(_)))
+                .count();
+            let timelock_slots = children
+                .iter()
+                .filter(|c| matches!(c, Semantic::Older(_) | Semantic::After(_)))
+                .count();
             // Nested non-key, non-timelock child (e.g. an inner multisig thresh).
             let nested: Vec<&&Sem> = children
                 .iter()
-                .filter(|c| !matches!(c, Semantic::Key(_) | Semantic::Older(_) | Semantic::After(_)))
+                .filter(|c| {
+                    !matches!(
+                        c,
+                        Semantic::Key(_) | Semantic::Older(_) | Semantic::After(_)
+                    )
+                })
                 .collect();
 
             if key_children > 0 && nested.is_empty() {
@@ -114,7 +134,10 @@ pub fn signers(
     let mut out = Vec::new();
     desc.for_each_key(|k| {
         let fp = k.master_fingerprint();
-        let path = k.full_derivation_path().map(|p| p.to_string()).unwrap_or_default();
+        let path = k
+            .full_derivation_path()
+            .map(|p| p.to_string())
+            .unwrap_or_default();
         out.push(PolicySigner {
             fingerprint: fp.to_string(),
             derivation_path: path,
@@ -143,6 +166,9 @@ pub fn build_registered_policy(
         network: network.into(),
         descriptor: parsed.canonical.clone(),
         descriptor_checksum: parsed.checksum.clone(),
+        policy_id: String::new(),
+        policy_template: String::new(),
+        policy_keys: Vec::new(),
         policy_fingerprint: parsed.checksum.clone(),
         signers,
         paths,

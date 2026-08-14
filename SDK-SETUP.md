@@ -1,140 +1,75 @@
-# Liana Signer — SDK setup & next steps
+# Liana Signer SDK Setup
 
-## STATUS 2026-06-02 — SDK structure confirmed against the real CLI
+## Supported baseline
 
-Installed the official `foundation` CLI (github.com/Foundation-Devices/foundation-cli,
-`cargo install --path .`) and ran `foundation new liana-signer-sdk --template
-multi-page-app`. The generated template is **structurally identical to this app**:
-`manifest.toml` (NOT `app-config.toml` — the docs are ahead of the code), the same
-`slint-keyos-platform` path deps, the same `src/main.rs` + `ui/pages/*` + `build.rs`
-+ `resources/icon.svg` + `i18n/en.json` layout, the `app!()` macro, and `@ui`
-widgets. **So this app already IS an SDK-conformant project.** The speculative
-`app-config.toml` was removed; `manifest.toml` is the real SDK manifest.
-
-**CLI maturity (important):** only `foundation new` + `foundation develop` are
-implemented. `build`/`sign`/`package` are stubs; **`sim`, `sideload`, `cert` do
-not exist yet.** So the CLI can scaffold + open the Nix shell, but cannot build
-or install to hardware. Use `cargo xtask run --hosted` for the sim (works today).
-
-A reference scaffold from the CLI lives at `../../../../liana-signer-sdk/`.
-
-## Where this landed (done autonomously)
-
-The app was rebuilt onto the **SDK primitives** and is now **device-portable**:
-
-- **SDK primitives:** `slint_keyos_platform::app!`, the `@ui` widget library,
-  `security` (app seed → key), `fs` (file I/O), and the file-picker overlay
-  (`navigation::select_file`) — exactly what the SDK's own `main.rs` uses.
-- **SDK project metadata:** `app-config.toml` (SDK source of truth — identity,
-  publisher, permissions), `resources/icon.svg`, `i18n/en.json`.
-- **Bitcoin/miniscript on the device-safe stack:** the descriptor/policy/PSBT/
-  signing logic now lives in `src/liana/` built on `ngwallet::bdk_wallet`
-  (no_std/secp-on-device), instead of a host-only crates.io `miniscript`.
-- **Both targets compile:** `cargo xtask check gui-app-liana-signer` passes for
-  **armv7a-unknown-xous-elf (device)** and the **simulator** with 0 errors.
-- **Tested:** app logic 7/7 (`cargo test -p gui-app-liana-signer`), reference
-  crate 8/8 (`liana-signer-core`), real Liana descriptor parses + checksum
-  matches, sim boots with no panic.
-- Design intent, features, branding, and miniscript standards all preserved.
-
-## What I could NOT do here (needs you)
-
-The official **`foundation` CLI** is not installed and its `build/sim/sideload`
-require **Nix**, which I couldn't install — **`sudo` needs a password** and you
-were away (Nix's installer creates the `/nix` volume + daemon via sudo).
-
-Good news: **you don't strictly need the foundation CLI** — KeyOS's own
-`cargo xtask` flow builds the app for both the simulator and the device, and
-that toolchain is already installed here (the ARM/xous toolchain downloaded via
-`cargo xtask install-toolchain`, no sudo).
-
-## Next steps — two tracks
-
-### Track A — simulator NOW (no Nix, works today)
-
-From `KeyOS/`:
+This project targets Foundation SDK 0.4.0 and KeyOS v1.4.0 or newer. The SDK installer verifies signed archives and selects the installed release through `~/.foundation/sdk/current`.
 
 ```bash
-cargo xtask run --hosted          # or: just sim   → opens the Passport window
+curl -fsSL https://foundation.xyz/sdk/install.sh | sh
+foundation doctor
 ```
 
-The app shows in the dev **Secret Menu** (registered in
-`os/gui-app-launcher/src/main.rs`). For real Signet testing with Liana, see
-`SIGNET-TEST.md`.
+The app keeps its stable 16-byte app ID in `app-config.toml`, so version 0.2.0 upgrades the existing installation and retains app-scoped seed and policy storage identity.
 
-**App device-compilation is proven without Nix:**
+## Build in KeyOS
+
+Place this repository at `apps/gui-app-liana-signer/`, add it to the root workspace members, then run from the KeyOS root:
+
 ```bash
-cargo xtask check gui-app-liana-signer   # ARM (xous) + sim, 0 errors
+cargo test -p gui-app-liana-signer
+nix develop .#build --command cargo xtask check gui-app-liana-signer
 ```
 
-But the **full flashable firmware image needs Nix.** `cargo xtask build` pulls
-the whole OS — including the `rfal-sys` (NFC) crate, whose `build.rs` needs the
-Nix-provided headers and fails outside it (it's unrelated to this app). So a
-real on-hardware install requires Track B (or running the device build inside
-`nix develop` on the KeyOS flake). Once in Nix:
+The `xtask check` command validates both `armv7a-unknown-xous-elf` and the hosted simulator. Taproot remains intentionally disabled; use a P2WSH Liana policy on Signet or mainnet.
+
+## Signed bundle
+
+KeyOS v1.4.0 requires a newer Rust toolchain than the one bundled with SDK 0.4.0. Build the app with the v1.4.0 workspace toolchain and sign it with the development identity created by the SDK:
+
 ```bash
-cargo xtask build && cargo xtask flash   # signed image + flash over USB (SAM-BA)
+nix develop .#build --command cargo xtask build-app gui-app-liana-signer \
+  --cosign2 ~/.foundation/signing/passport-prime-dev/cosign2.toml \
+  --archive
 ```
 
-### Track B — adopt the official Foundation SDK (the `foundation` CLI)
+The command validates the manifest and permissions, builds the hardware ELF, writes a signed manifest with file hashes, and stages both the USB-debug bundle and `.app` archive under `target/armv7a-unknown-xous-elf/release/app-bundles/`.
 
-1. **Install Nix** (Terminal, ~3 min — needs your password):
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
-   ```
-   Open a fresh terminal; `nix --version` to confirm.
+The configured development signing identity is `passport-prime-dev`. Change `signing-identity` deliberately when producing a release under another publisher; never commit a private key.
 
-2. **Get the `foundation` CLI.** It's a public-beta bundle and is not on this
-   machine — it isn't a documented `cargo install`. Obtain it from Foundation
-   (you have the contacts) or the developer portal, then `foundation doctor` to
-   verify the environment.
+## Sideload to Prime
 
-3. **Scaffold a clean SDK project and move the code in:**
-   ```bash
-   foundation new liana-signer --template multi-page-app
-   ```
-   Then copy into it: `src/liana/`, `src/main.rs`, `src/master_key.rs`,
-   `ui/`, `resources/icon.svg`, `i18n/en.json`, and merge this app's
-   `app-config.toml` (already in SDK format). The Cargo deps map 1:1 — the SDK
-   provides `slint_keyos_platform`, `@ui`, `fs`, `security`, `ngwallet`.
+Unlock Passport Prime, enable Developer Mode and USB app sideload/storage, then connect it over USB. Confirm both the `PRIME` mount and USB serial endpoint are present before running:
 
-4. **Run + install via the SDK:**
-   ```bash
-   foundation develop      # enter the SDK Nix shell
-   foundation sim          # build + launch the simulator
-   foundation cert gen "Foundation"
-   foundation sideload     # build, sign, copy to the PRIME USB volume, launch
-   ```
+```bash
+nix develop .#build --command cargo build -p passport-drive --release
+target/release/passport-drive load_app \
+  target/armv7a-unknown-xous-elf/release/app-bundles/6c69616e612d7369676e65722d617070
+```
 
-> Note: I also tried building just the app's device `.elf` with a minimal
-> service set to dodge `rfal-sys` — it compiles the app (device `.rmeta`
-> artifacts are produced) but the xtask image-assembly step still routes through
-> the full pipeline. So device *compilation* is verified without Nix; producing
-> the linked/flashable artifact needs Nix.
+This installs the app bundle and launches it over USB debug. It does not replace the full KeyOS firmware image. Install or flash the desired KeyOS release through Foundation's firmware workflow first, then sideload the app built against that release.
 
-## Hardware build: confirmed blocked on macOS (2026-06-02)
+## Development firmware
 
-With Nix installed and the dev shell working, I attempted the device build:
-- `cargo xtask build` (full firmware) → fails on `rfal-sys` (NFC) `build.rs`,
-  which is Ubuntu/Linux-oriented ("known-good bindings" copy). KeyOS firmware is
-  officially built on **Ubuntu** — macOS is not supported for the full image.
-- `cargo build -p gui-app-liana-signer --release --target armv7a-unknown-xous-elf`
-  (app only, dodges rfal-sys) → compiles but **fails at link**:
-  `undefined symbol: rustsecp256k1_*` (secp C lib not linked outside xtask's
-  app-link pipeline, which itself pulls the full image).
+To include Liana Signer in a complete local KeyOS development image, add it to the root workspace and `DEFAULT_APPS_NORMAL`, generate the ignored local firmware key once, then build and flash from the KeyOS root:
 
-**The app is device-compilable** (`cargo xtask check gui-app-liana-signer` = 0
-errors, ARM + sim). The final binary just can't be emitted from macOS.
+```bash
+scripts/generate-cosign2-dev-key.sh
+nix develop .#build --command cargo xtask build-all
+nix develop .#build --command cargo xtask flash
+```
 
-### To install on hardware — pick one
-- **`foundation` CLI from https://foundation.xyz/dev** (recommended): it ships
-  the blessed build env and `foundation sideload` pushes the app bundle over USB
-  — no full-firmware rebuild, no NFC, no Ubuntu. This is the supported path.
-- **Ubuntu build host:** clone KeyOS on Ubuntu 22.04/24.04, `just build-all`,
-  `just flash` (or sideload).
+The resulting firmware is signed with the ignored local development key and has USB debug enabled. It is suitable for a Prime development unit, not for public release or production devices. Production firmware must be built and signed through Foundation's release infrastructure.
 
-## Open verification items
-- Full signed device image + on-hardware install (needs a physical Prime).
-- End-to-end Signet sign with real Liana (see `SIGNET-TEST.md`; build the Liana
-  wallet with the sim's exported key so Passport can sign).
-- Taproot (`tr`) descriptors (POC is P2WSH only).
+## Permission constraint
+
+Public SDK apps may use file-level `Flush` and `CloseFile`, but not filesystem-wide `FlushFs`, which is Foundation-only in current KeyOS. Keep the export order as write, file flush, close file, close directory. Adding `FileSystem::flush` will either fail SDK permission validation or be denied on a third-party-signed device.
+
+## Simulator and Liana
+
+For deterministic local Signet testing, configure the hosted app build with the `dev-seed` and `sim-bridge` features, then follow `SIGNET-TEST.md` and launch the workspace simulator:
+
+```bash
+cargo xtask run --hosted
+```
+
+Build the Liana wallet with the simulator's exported account. The signer correctly refuses policies whose complete xpub does not match its app seed.

@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+app-name = "gui-app-liana-signer"
+friendly-app-name = "Liana Signer"
+launcher-app-name = "Liana"
+description = "Policy-aware Liana Miniscript signer for Passport Prime"
+icon = "resources/icon.svg"
+app-id = "0x6c69616e612d7369676e65722d617070"
+version = "0.2.0"
+min-keyos-version = "1.4.0"
+signing-identity = "passport-prime-dev"
+
+[publisher]
+name = "Foundation Devices"
+contact-email = "hello@foundation.xyz"
+support-url = "https://foundation.xyz"
+
+[permissions]
+template = ["gui-app", "fs-generic"]
+"os/security" = ["GetAppSeed"]
+"os/fs" = [
+    "GetAirlockReadAccess",
+    "GetAirlockWriteAccess",
+    "GetUserReadAccess",
+    "GetUserWriteAccess",
+    "GetUsbReadAccess",
+    "GetUsbWriteAccess",
+]

@@ -5,6 +5,8 @@
 
 use super::{Error, RegisteredPolicy, Result};
 
+pub const MAX_POLICIES: usize = 16;
+
 pub fn to_json(policy: &RegisteredPolicy) -> Result<String> {
     serde_json::to_string_pretty(policy).map_err(|e| Error::Parse(format!("serialize: {e}")))
 }
@@ -21,20 +23,37 @@ pub struct PolicyStore {
 }
 
 impl PolicyStore {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-    pub fn all(&self) -> &[RegisteredPolicy] { &self.policies }
+    pub fn all(&self) -> &[RegisteredPolicy] {
+        &self.policies
+    }
 
-    pub fn len(&self) -> usize { self.policies.len() }
+    pub fn len(&self) -> usize {
+        self.policies.len()
+    }
 
-    pub fn is_empty(&self) -> bool { self.policies.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.policies.is_empty()
+    }
 
     /// Add a policy. Rejects a duplicate checksum (same descriptor).
     pub fn add(&mut self, policy: RegisteredPolicy) -> Result<()> {
-        if self.policies.iter().any(|p| p.descriptor_checksum == policy.descriptor_checksum) {
+        if self
+            .policies
+            .iter()
+            .any(|p| p.descriptor_checksum == policy.descriptor_checksum)
+        {
             return Err(Error::Parse(format!(
                 "policy with checksum #{} already registered",
                 policy.descriptor_checksum
+            )));
+        }
+        if self.policies.len() >= MAX_POLICIES {
+            return Err(Error::Parse(format!(
+                "maximum registered policy count ({MAX_POLICIES}) reached"
             )));
         }
         self.policies.push(policy);
@@ -42,7 +61,9 @@ impl PolicyStore {
     }
 
     pub fn find_by_checksum(&self, checksum: &str) -> Option<&RegisteredPolicy> {
-        self.policies.iter().find(|p| p.descriptor_checksum == checksum)
+        self.policies
+            .iter()
+            .find(|p| p.descriptor_checksum == checksum)
     }
 
     pub fn remove(&mut self, checksum: &str) -> bool {
@@ -54,14 +75,20 @@ impl PolicyStore {
     /// Set the archived flag on a policy; returns the updated policy (cloned) so
     /// the caller can persist it.
     pub fn set_archived(&mut self, checksum: &str, archived: bool) -> Option<RegisteredPolicy> {
-        let p = self.policies.iter_mut().find(|p| p.descriptor_checksum == checksum)?;
+        let p = self
+            .policies
+            .iter_mut()
+            .find(|p| p.descriptor_checksum == checksum)?;
         p.archived = archived;
         Some(p.clone())
     }
 
     /// Rename a policy; returns the updated policy (cloned) so the caller can persist it.
     pub fn set_name(&mut self, checksum: &str, name: &str) -> Option<RegisteredPolicy> {
-        let p = self.policies.iter_mut().find(|p| p.descriptor_checksum == checksum)?;
+        let p = self
+            .policies
+            .iter_mut()
+            .find(|p| p.descriptor_checksum == checksum)?;
         p.name = name.to_string();
         Some(p.clone())
     }

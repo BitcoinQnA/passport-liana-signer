@@ -1,6 +1,9 @@
 # appId = ASCII "liana-signer-app" (exactly 16 bytes / 0x + 32 hex).
 manifestVersion = "0"
 appId = "0x6c69616e612d7369676e65722d617070"
+publisher = "Foundation Devices"
+description = "Policy-aware Liana Miniscript signer for Passport Prime"
+version = "0.2.0"
 
 [appName]
 en = "Liana"

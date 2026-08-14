@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { ButtonSection, AppHeader, TextLg, TextMd, TextSm, BasePage,
-         ScrollBody, IconButton, TimerCircularProgress, JumboIcon, Icon } from "@ui/widgets.slint";
+         ScrollBody, IconButton, TimerCircularProgress, JumboIcon, Icon,
+         DynamicQrCode } from "@ui/widgets.slint";
 import { Importance, Palette, Size, IconSize } from "@ui/theme.slint";
 import { Callbacks } from "../../callbacks.slint";
 import { ReviewPageProps } from "./props.slint";
@@ -86,6 +87,10 @@ export component ReviewPagePage inherits Rectangle {
                                 wrap: word-wrap;
                             }
                         }
+                    }
+
+                    if Callbacks.review-signed: DynamicQrCode {
+                        get-parts(density) => { Callbacks.signed-psbt-qr-parts(density); }
                     }
 
                     // Which registered wallet this PSBT belongs to.
@@ -206,7 +211,7 @@ export component ReviewPagePage inherits Rectangle {
                 // the primary action; on success route to the full-screen success.
                 if Callbacks.review-signed: LianaButton {
                     label: TR2.lookup(TrId.ReviewSaveToFile);
-                    primary: true;
+                    primary: false;
                     clicked => {
                         Callbacks.export-signed();
                         if Callbacks.export-ok { Navigate.export-done-page({ }); }
