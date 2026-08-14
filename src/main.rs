@@ -55,7 +55,7 @@ use slint_keyos_platform::{
 
 app!("Liana");
 
-const DEFAULT_NETWORK: Network = Network::Signet;
+const DEFAULT_NETWORK: Network = Network::Bitcoin;
 #[cfg(test)]
 const TEST_ACCOUNT_PATH: &str = "m/48'/1'/0'/2'";
 #[cfg(test)]
@@ -1576,7 +1576,7 @@ fn sample_descriptor(
     device_account_xpub: &Xpub,
     device_fp: Fingerprint,
 ) -> String {
-    let rec_master = Xpriv::new_master(DEFAULT_NETWORK, &[0x22; 32]).unwrap();
+    let rec_master = Xpriv::new_master(Network::Signet, &[0x22; 32]).unwrap();
     let rec_fp = rec_master.fingerprint(secp);
     let acct = DerivationPath::from_str(TEST_ACCOUNT_PATH).unwrap();
     let rec_xpub = Xpub::from_priv(secp, &rec_master.derive_priv(secp, &acct).unwrap());
@@ -2317,9 +2317,17 @@ mod tests {
     use super::*;
     use liana::bitcoin::sighash::EcdsaSighashType;
 
+    #[test]
+    fn xpub_network_defaults_to_mainnet_and_labels_round_trip() {
+        assert_eq!(DEFAULT_NETWORK, Network::Bitcoin);
+        for network in [Network::Bitcoin, Network::Signet, Network::Testnet] {
+            assert_eq!(network_from_label(network_label(network)), Some(network));
+        }
+    }
+
     fn device() -> (Secp256k1<All>, Xpub, Fingerprint) {
         let secp = Secp256k1::new();
-        let master = Xpriv::new_master(DEFAULT_NETWORK, &[0x11; 32]).unwrap();
+        let master = Xpriv::new_master(Network::Signet, &[0x11; 32]).unwrap();
         let fp = master.fingerprint(&secp);
         let acct = DerivationPath::from_str(TEST_ACCOUNT_PATH).unwrap();
         let xpub = Xpub::from_priv(&secp, &master.derive_priv(&secp, &acct).unwrap());
@@ -2375,7 +2383,7 @@ mod tests {
     // building descriptors in tests without hardcoding xpubs.
     fn test_key(seed: u8) -> String {
         let secp = Secp256k1::new();
-        let m = Xpriv::new_master(DEFAULT_NETWORK, &[seed; 32]).unwrap();
+        let m = Xpriv::new_master(Network::Signet, &[seed; 32]).unwrap();
         let fp = m.fingerprint(&secp);
         let acct = DerivationPath::from_str(TEST_ACCOUNT_PATH).unwrap();
         let xpub = Xpub::from_priv(&secp, &m.derive_priv(&secp, &acct).unwrap());
@@ -2490,7 +2498,7 @@ mod tests {
                 ..
             }
         ));
-        let master = Xpriv::new_master(DEFAULT_NETWORK, &[0x11; 32]).unwrap();
+        let master = Xpriv::new_master(Network::Signet, &[0x11; 32]).unwrap();
         let finalized =
             signing::sign_and_finalize(psbt, &master, &secp, m.expected_signatures).expect("sign");
         assert!(finalized.inputs[0].final_script_witness.is_some());
@@ -2539,7 +2547,7 @@ mod tests {
             signing::SignDecision::Refuse(_)
         ));
 
-        let master = Xpriv::new_master(DEFAULT_NETWORK, &[0x11; 32]).unwrap();
+        let master = Xpriv::new_master(Network::Signet, &[0x11; 32]).unwrap();
         let err = signing::sign(psbt, &master, &secp, m.expected_signatures)
             .unwrap_err()
             .to_string();

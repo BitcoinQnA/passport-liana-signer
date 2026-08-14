@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { ButtonSection, AppHeader, TextLg, TextMd, TextSm, BasePage,
-         ScrollBody, IconButton, TitledInput } from "@ui/widgets.slint";
+         ScrollBody, IconButton, OverlayMenu, PopupMenuItem, TitledInput } from "@ui/widgets.slint";
 import { Importance, Palette, Size } from "@ui/theme.slint";
 import { Callbacks } from "../../callbacks.slint";
 import { XpubPageProps } from "./props.slint";
@@ -34,6 +34,7 @@ component Step inherits HorizontalLayout {
 
 export component XpubPagePage inherits Rectangle {
     in property <XpubPageProps> props;
+    property <bool> is-menu-open: false;
 
     BasePage {
         VerticalLayout {
@@ -46,7 +47,12 @@ export component XpubPagePage inherits Rectangle {
                     importance: Importance.normal;
                     clicked => { Navigate.backward(); }
                 }
-                Rectangle { }
+                IconButton {
+                    icon: "ellipsis";
+                    size: Size.sz8;
+                    importance: Importance.normal;
+                    clicked => { is-menu-open = !is-menu-open; }
+                }
             }
 
             ScrollBody {
@@ -62,18 +68,20 @@ export component XpubPagePage inherits Rectangle {
                     }
 
                     TextSm { text: TR2.lookup(TrId.XpubHowItWorks); color: Palette.content-tertiary; }
-                    TextSm { text: TR2.lookup(TrId.XpubNetworkHint); color: Palette.content-tertiary; }
                     HorizontalLayout {
                         spacing: Size.sz2;
-                        LianaButton {
-                            label: TR2.lookup(TrId.XpubNetworkSignet);
-                            primary: Callbacks.xpub-network == "signet";
-                            clicked => { Callbacks.set-xpub-network("signet"); }
+                        TextSm {
+                            text: TR2.lookup(TrId.XpubNetworkHint);
+                            color: Palette.content-tertiary;
+                            horizontal-stretch: 1;
                         }
-                        LianaButton {
-                            label: TR2.lookup(TrId.XpubNetworkMainnet);
-                            primary: Callbacks.xpub-network == "bitcoin";
-                            clicked => { Callbacks.set-xpub-network("bitcoin"); }
+                        TextSm {
+                            text: Callbacks.xpub-network == "bitcoin"
+                                ? TR2.lookup(TrId.XpubNetworkMainnet)
+                                : Callbacks.xpub-network == "testnet"
+                                    ? TR2.lookup(TrId.XpubNetworkTestnet)
+                                    : TR2.lookup(TrId.XpubNetworkSignet);
+                            color: Liana.green;
                         }
                     }
                     TitledInput {
@@ -109,6 +117,37 @@ export component XpubPagePage inherits Rectangle {
                     primary: true;
                     clicked => { Navigate.xpub-save-page({ }); }
                 }
+            }
+        }
+    }
+
+    if is-menu-open: OverlayMenu {
+        touched-off => { is-menu-open = false; }
+
+        PopupMenuItem {
+            label: TR2.lookup(TrId.XpubNetworkMainnet);
+            icon: Callbacks.xpub-network == "bitcoin" ? "check" : "";
+            first: true;
+            clicked => {
+                is-menu-open = false;
+                Callbacks.set-xpub-network("bitcoin");
+            }
+        }
+        PopupMenuItem {
+            label: TR2.lookup(TrId.XpubNetworkSignet);
+            icon: Callbacks.xpub-network == "signet" ? "check" : "";
+            clicked => {
+                is-menu-open = false;
+                Callbacks.set-xpub-network("signet");
+            }
+        }
+        PopupMenuItem {
+            label: TR2.lookup(TrId.XpubNetworkTestnet);
+            icon: Callbacks.xpub-network == "testnet" ? "check" : "";
+            last: true;
+            clicked => {
+                is-menu-open = false;
+                Callbacks.set-xpub-network("testnet");
             }
         }
     }
