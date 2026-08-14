@@ -50,7 +50,11 @@ This installs the app bundle and launches it over USB debug. It does not replace
 
 ## Development firmware
 
-To include Liana Signer in a complete local KeyOS development image, add it to the root workspace and `DEFAULT_APPS_NORMAL`, generate the ignored local firmware key once, then build and flash from the KeyOS root:
+To include Liana Signer in a complete local KeyOS development image:
+
+1. Add it to the root workspace and `DEFAULT_APPS_NORMAL`.
+2. Add app ID `0x6c69616e612d7369676e65722d617070` to the launcher's `KNOWN_APPS` list and add `main.liana` to each launcher locale. KeyOS 1.4 hides non-removable built-in apps that are not allowlisted.
+3. Generate the ignored local firmware key once, then build and flash from the KeyOS root:
 
 ```bash
 scripts/generate-cosign2-dev-key.sh
@@ -59,6 +63,8 @@ nix develop .#build --command cargo xtask flash
 ```
 
 The resulting firmware is signed with the ignored local development key and has USB debug enabled. It is suitable for a Prime development unit, not for public release or production devices. Production firmware must be built and signed through Foundation's release infrastructure.
+
+The SDK-standard `resources/icon.svg` is staged automatically for both built-in and sideloaded bundles. Do not add a separate launcher icon implementation.
 
 ## Permission constraint
 

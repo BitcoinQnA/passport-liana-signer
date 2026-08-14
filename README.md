@@ -63,7 +63,7 @@ The short version:
    ```
 3. **Device build/flash** and the end-to-end **[signet test with Liana](SIGNET-TEST.md)** are covered in `AGENTS.md` and `SDK-SETUP.md`.
 
-Integrating into a KeyOS workspace also touches a few shared files outside this directory: the launcher tile and a `CardColor::Liana` accent (`ui/types.slint`, `ui/utils.slint`, the launcher, the bitcoin app's color map), the shared `liana.svg` icon (included here under `assets/`), and the workspace/xtask membership.
+For a built-in firmware integration, also add the app ID to the KeyOS 1.4 launcher's `KNOWN_APPS` list and add its localized `main.liana` label. Built-in apps are intentionally hidden unless allowlisted. SDK-sideloaded apps are discovered dynamically and do not need that source change. In both cases, KeyOS stages the launcher icon from the SDK-standard `resources/icon.svg` path.
 
 ## Status
 

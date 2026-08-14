@@ -17,7 +17,7 @@ Two ways to get a workspace, in order of preference:
    curl -fsSL https://foundation.xyz/sdk/install.sh | sh
    ```
    (Supported hosts: Apple Silicon macOS and Linux x86_64. The installer verifies a GPG signature and installs to `~/.foundation/sdk/`.) SDK 0.4.0 provides `build`, `sim`, and USB-debug `sideload`; check `foundation --help` for the installed surface. See [`SDK-SETUP.md`](SDK-SETUP.md).
-2. **KeyOS source checkout** — clone the KeyOS repo and drop this app in at `apps/gui-app-liana-signer/`, register it in the launcher + workspace, then use `cargo xtask`. KeyOS is Foundation's OS and is not public; this route needs access.
+2. **KeyOS source checkout** — clone the KeyOS repo and drop this app in at `apps/gui-app-liana-signer/`, register it in the workspace and `DEFAULT_APPS_NORMAL`, then add its app ID to the KeyOS 1.4 launcher's `KNOWN_APPS` list with a localized `main.liana` label. Built-in apps not on that allowlist are installed but hidden. Then use `cargo xtask`. KeyOS is Foundation's OS and is not public; this route needs access.
 
 If neither is available, the useful things an agent can still do here: read and explain the code, run the host unit tests (below), and edit the Rust/Slint sources.
 
