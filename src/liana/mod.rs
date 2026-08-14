@@ -47,12 +47,15 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Parse(s) => write!(f, "parse error: {s}"),
-            Error::Unsupported(s) => write!(f, "unsupported policy: {s}"),
-            Error::NotRegistered => write!(f, "PSBT does not match a registered policy"),
-            Error::NoPassportKey => write!(f, "Passport owns no key on the active spend path"),
-            Error::Sign(s) => write!(f, "signing error: {s}"),
-            Error::Match(s) => write!(f, "match error: {s}"),
+            Error::Parse(s) | Error::Unsupported(s) | Error::Sign(s) | Error::Match(s) => {
+                f.write_str(s)
+            }
+            Error::NotRegistered => {
+                f.write_str("Transaction does not match a registered wallet policy.")
+            }
+            Error::NoPassportKey => {
+                f.write_str("This Passport has no key on the selected spending path.")
+            }
         }
     }
 }

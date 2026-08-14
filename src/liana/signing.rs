@@ -30,19 +30,16 @@ pub enum SignDecision {
 pub fn decide(m: &MatchResult, _policy: &RegisteredPolicy) -> SignDecision {
     if !m.matched {
         return SignDecision::Refuse(
-            "This PSBT does not match the registered policy. Refusing to sign.".into(),
+            "This transaction does not match the registered wallet policy.".into(),
         );
     }
     let Some(path) = m.active_path else {
-        return SignDecision::Refuse(refusal_reason(
-            m,
-            "Could not determine the active spend path.",
-        ));
+        return SignDecision::Refuse(refusal_reason(m, "Unable to determine the signing path."));
     };
     if !m.passport_can_sign {
         return SignDecision::Refuse(refusal_reason(
             m,
-            "Passport owns no key on the active spend path.",
+            "This Passport has no key on the selected spending path.",
         ));
     }
     SignDecision::Allow {

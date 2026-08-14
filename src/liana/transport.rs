@@ -328,7 +328,7 @@ pub fn encode_crypto_account(
     account: u32,
 ) -> Result<Vec<u8>> {
     if account >= (1 << 31) {
-        return Err(Error::Parse("account index exceeds BIP32 range".into()));
+        return Err(Error::Parse("Account is outside the BIP32 range.".into()));
     }
     let coin_type = if network == Network::Bitcoin { 0 } else { 1 };
     let mut output = Vec::with_capacity(160);

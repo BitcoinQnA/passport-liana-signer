@@ -1319,7 +1319,7 @@ fn master_for_network(seed: &[u8; 32], network: Network) -> anyhow::Result<Xpriv
 fn account_path(network: Network, account: u32) -> anyhow::Result<DerivationPath> {
     let coin_type = if network == Network::Bitcoin { 0 } else { 1 };
     if account >= (1 << 31) {
-        anyhow::bail!("account index exceeds BIP32 range");
+        anyhow::bail!("Account is outside the BIP32 range.");
     }
     DerivationPath::from_str(&format!("m/48'/{coin_type}'/{account}'/2'"))
         .map_err(|e| anyhow::anyhow!("invalid account path: {e}"))
@@ -1443,9 +1443,9 @@ fn network_from_descriptor(descriptor: &str) -> anyhow::Result<Network> {
             // The app supports Signet as the public test network for this flow.
             Ok(Network::Signet)
         }
-        (true, true) => anyhow::bail!("descriptor mixes mainnet and testnet extended keys"),
+        (true, true) => anyhow::bail!("Wallet policy mixes mainnet and testnet extended keys."),
         (false, false) => {
-            anyhow::bail!("descriptor network could not be determined from public extended keys")
+            anyhow::bail!("Unable to determine the wallet-policy network from its extended keys.")
         }
     }
 }
@@ -1538,7 +1538,9 @@ fn verify_registered_key(
         anyhow::bail!(reason);
     }
     if owned_keys.len() != 1 {
-        anyhow::bail!("policy must contain exactly one extended key belonging to this Passport");
+        anyhow::bail!(
+            "Wallet policy must contain exactly one extended key belonging to this Passport."
+        );
     }
     Ok(())
 }
@@ -1880,7 +1882,9 @@ fn scan_or_import_policy() -> anyhow::Result<String> {
             let bytes = decode_ur_bytes(&ur_type, &data, "bytes")?;
             String::from_utf8(bytes).context("wallet-policy QR is not UTF-8")
         }
-        Some(ScanQrResult::Qr { .. }) => anyhow::bail!("wallet policy must use ur:bytes"),
+        Some(ScanQrResult::Qr { .. }) => {
+            anyhow::bail!("Wallet policy QR must use ur:bytes.")
+        }
         Some(ScanQrResult::ButtonClicked) => import_via_picker(),
         Some(ScanQrResult::LeftClicked | ScanQrResult::RightClicked) | None => {
             anyhow::bail!("cancelled")
@@ -1903,7 +1907,9 @@ fn scan_psbt_or_file() -> anyhow::Result<Psbt> {
             let bytes = decode_ur_psbt(&ur_type, &data)?;
             parse_psbt_bytes(&bytes)
         }
-        Some(ScanQrResult::Qr { .. }) => anyhow::bail!("transaction must use ur:crypto-psbt"),
+        Some(ScanQrResult::Qr { .. }) => {
+            anyhow::bail!("Transaction QR must use ur:crypto-psbt.")
+        }
         Some(ScanQrResult::ButtonClicked) => read_psbt_via_picker(),
         Some(ScanQrResult::LeftClicked | ScanQrResult::RightClicked) | None => {
             anyhow::bail!("cancelled")
@@ -1921,8 +1927,12 @@ fn scan_address_request() -> anyhow::Result<Vec<u8>> {
         .map_err(|e| anyhow::anyhow!("QR scanner error: {e:?}"))?
     {
         Some(ScanQrResult::Ur2 { ur_type, data, .. }) => decode_ur_bytes(&ur_type, &data, "bytes"),
-        Some(ScanQrResult::Qr { .. }) => anyhow::bail!("address request must use ur:bytes"),
-        Some(ScanQrResult::ButtonClicked) => anyhow::bail!("address verification is QR-only"),
+        Some(ScanQrResult::Qr { .. }) => {
+            anyhow::bail!("Address request QR must use ur:bytes.")
+        }
+        Some(ScanQrResult::ButtonClicked) => {
+            anyhow::bail!("Address verification requires a QR request.")
+        }
         Some(ScanQrResult::LeftClicked | ScanQrResult::RightClicked) | None => {
             anyhow::bail!("cancelled")
         }
@@ -1931,7 +1941,7 @@ fn scan_address_request() -> anyhow::Result<Vec<u8>> {
 
 fn decode_ur_bytes(ur_type: &str, cbor: &[u8], expected_type: &str) -> anyhow::Result<Vec<u8>> {
     if ur_type != expected_type {
-        anyhow::bail!("expected ur:{expected_type}, received ur:{ur_type}");
+        anyhow::bail!("Expected ur:{expected_type}, received ur:{ur_type}.");
     }
     if cbor.len() > transport::MAX_REGISTRY_CBOR_BYTES {
         anyhow::bail!(
@@ -1950,13 +1960,13 @@ fn decode_ur_bytes(ur_type: &str, cbor: &[u8], expected_type: &str) -> anyhow::R
             }
             Ok(bytes)
         }
-        _ => anyhow::bail!("ur:{ur_type} does not contain a bytes registry value"),
+        _ => anyhow::bail!("ur:{ur_type} does not contain a bytes registry value."),
     }
 }
 
 fn decode_ur_psbt(ur_type: &str, cbor: &[u8]) -> anyhow::Result<Vec<u8>> {
     if ur_type != "crypto-psbt" {
-        anyhow::bail!("expected ur:crypto-psbt, received ur:{ur_type}");
+        anyhow::bail!("Expected ur:crypto-psbt, received ur:{ur_type}.");
     }
     if cbor.len() > transport::MAX_REGISTRY_CBOR_BYTES {
         anyhow::bail!(
@@ -1966,14 +1976,14 @@ fn decode_ur_psbt(ur_type: &str, cbor: &[u8]) -> anyhow::Result<Vec<u8>> {
     }
     match UrValue::from_ur(ur_type, cbor).context("invalid crypto-psbt registry value")? {
         UrValue::Psbt(bytes) => Ok(bytes.to_vec()),
-        _ => anyhow::bail!("ur:crypto-psbt does not contain a PSBT registry value"),
+        _ => anyhow::bail!("ur:crypto-psbt does not contain a PSBT registry value."),
     }
 }
 
 fn registry_bytes_cbor(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
     if bytes.len() > transport::MAX_REGISTRY_CBOR_BYTES {
         anyhow::bail!(
-            "QR payload exceeds {} bytes; use the file transport",
+            "QR payload exceeds {} bytes. Use a file instead.",
             transport::MAX_REGISTRY_CBOR_BYTES
         );
     }
@@ -1981,7 +1991,7 @@ fn registry_bytes_cbor(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
         .map_err(|e| anyhow::anyhow!("encode UR registry bytes: {e}"))?;
     if encoded.len() > transport::MAX_REGISTRY_CBOR_BYTES {
         anyhow::bail!(
-            "encoded QR payload exceeds {} bytes; use the file transport",
+            "Encoded QR payload exceeds {} bytes. Use a file instead.",
             transport::MAX_REGISTRY_CBOR_BYTES
         );
     }
@@ -1992,7 +2002,7 @@ fn read_bytes_path_limited(path: &Path, max_bytes: u64, label: &str) -> anyhow::
     let meta = std::fs::metadata(path)?;
     if meta.len() > max_bytes {
         anyhow::bail!(
-            "{label} file is too large ({} bytes, max {max_bytes})",
+            "The {label} file is {} bytes. Maximum size: {max_bytes} bytes.",
             meta.len()
         );
     }
@@ -2000,14 +2010,14 @@ fn read_bytes_path_limited(path: &Path, max_bytes: u64, label: &str) -> anyhow::
     let mut bytes = Vec::with_capacity(meta.len() as usize);
     file.take(max_bytes + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > max_bytes {
-        anyhow::bail!("{label} file is too large (max {max_bytes})");
+        anyhow::bail!("The {label} file is too large. Maximum size: {max_bytes} bytes.");
     }
     Ok(bytes)
 }
 
 fn read_text_path_limited(path: &Path, max_bytes: u64, label: &str) -> anyhow::Result<String> {
     String::from_utf8(read_bytes_path_limited(path, max_bytes, label)?)
-        .map_err(|_| anyhow::anyhow!("{label} file is not valid UTF-8"))
+        .map_err(|_| anyhow::anyhow!("The {label} file is not valid UTF-8 text."))
 }
 
 fn read_bytes_fs_limited(
@@ -2022,7 +2032,7 @@ fn read_bytes_fs_limited(
         .map_err(|e| anyhow::anyhow!("metadata {path}: {e:?}"))?;
     if meta.size > max_bytes {
         anyhow::bail!(
-            "{label} file is too large ({} bytes, max {max_bytes})",
+            "The {label} file is {} bytes. Maximum size: {max_bytes} bytes.",
             meta.size
         );
     }
@@ -2042,7 +2052,7 @@ fn read_bytes_fs_limited(
         .read_to_end(&mut bytes)
         .map_err(|e| anyhow::anyhow!("read {path}: {e:?}"))?;
     if bytes.len() as u64 > max_bytes {
-        anyhow::bail!("{label} file is too large (max {max_bytes})");
+        anyhow::bail!("The {label} file is too large. Maximum size: {max_bytes} bytes.");
     }
     Ok(bytes)
 }
@@ -2057,7 +2067,7 @@ fn read_text_fs_limited(
     String::from_utf8(read_bytes_fs_limited(
         filesystem, path, location, max_bytes, label,
     )?)
-    .map_err(|_| anyhow::anyhow!("{label} file is not valid UTF-8"))
+    .map_err(|_| anyhow::anyhow!("The {label} file is not valid UTF-8 text."))
 }
 
 /// Is `target` an address derived from this policy's descriptor? Returns the
@@ -2091,7 +2101,7 @@ fn derive_policy_address(
     network: Network,
 ) -> anyhow::Result<String> {
     if branch > 1 || index >= (1 << 31) {
-        anyhow::bail!("address derivation is outside the supported range");
+        anyhow::bail!("Address derivation is outside the supported range.");
     }
     let parsed = descriptor::import(descriptor_str).map_err(|e| anyhow::anyhow!(e.to_string()))?;
     let singles = parsed
@@ -2157,7 +2167,7 @@ fn read_psbt_via_picker() -> anyhow::Result<Psbt> {
         anyhow::bail!("cancelled");
     };
     let Some((path, loc)) = result.files().first().cloned() else {
-        anyhow::bail!("no file selected");
+        anyhow::bail!("No file selected.");
     };
     let filesystem = FileSystem::default();
     let location = map_location(loc);
@@ -2251,7 +2261,7 @@ fn export_via_picker(filename: &str, bytes: &[u8]) -> anyhow::Result<String> {
         anyhow::bail!("cancelled");
     };
     let Some((dir, loc)) = result.files().first().cloned() else {
-        anyhow::bail!("no folder selected");
+        anyhow::bail!("No folder selected.");
     };
     let dir = dir.trim_end_matches('/').to_string();
     // Picking a location root gives an empty path; tuck files into a `liana/` subdir.
@@ -2282,7 +2292,7 @@ fn import_via_picker() -> anyhow::Result<String> {
         anyhow::bail!("cancelled");
     };
     let Some((path, loc)) = result.files().first().cloned() else {
-        anyhow::bail!("no file selected");
+        anyhow::bail!("No file selected.");
     };
     let filesystem = FileSystem::default();
     read_text_fs_limited(
@@ -2725,7 +2735,7 @@ mod tests {
         let err = register_descriptor(&desc, &[0x11; 32], &secp, wrong_fp)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("does not contain this Passport"), "got: {err}");
+        assert!(err.contains("belonging to this Passport"), "got: {err}");
     }
 
     #[test]
@@ -2838,8 +2848,10 @@ mod tests {
         let (secp, xpub, fp) = device();
         let reg = seed_sample(&secp, &xpub, fp).unwrap();
         let summary = policy_summary(&reg);
-        assert!(summary.contains("recovery"), "got: {summary}");
-        assert!(summary.contains("months"), "got: {summary}");
+        assert!(
+            summary.contains("Recovery after about 12 months"),
+            "got: {summary}"
+        );
     }
 
     #[test]
