@@ -56,6 +56,7 @@ use slint_keyos_platform::{
 app!("Liana");
 
 const DEFAULT_NETWORK: Network = Network::Bitcoin;
+const LIANA_ACCOUNT: u32 = 0;
 #[cfg(test)]
 const TEST_ACCOUNT_PATH: &str = "m/48'/1'/0'/2'";
 #[cfg(test)]
@@ -83,7 +84,6 @@ struct AppState {
     data_dir: PathBuf,
     policies: store::PolicyStore,
     xpub_network: Network,
-    xpub_account: u32,
     pending: Option<Pending>,
     /// A parsed-but-not-yet-committed policy awaiting the user's confirmation in
     /// the guided import-review flow.
@@ -138,7 +138,6 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
         data_dir,
         policies,
         xpub_network: selected_network,
-        xpub_account: 0,
         pending: None,
         pending_import: None,
         last_signed: None,
@@ -221,39 +220,19 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
         });
     }
 
-    // -- switch exported BIP48 account -------------------------------------
-    {
-        let state = state.clone();
-        let weak = ui.as_weak();
-        ui.global::<Callbacks>().on_set_xpub_account(move |account| {
-            let Some(ui) = weak.upgrade() else { return };
-            let parsed = account.as_str().parse::<u32>();
-            match parsed {
-                Ok(account) if account < (1 << 31) => {
-                    let network = state.lock().unwrap().xpub_network;
-                    state.lock().unwrap().xpub_account = account;
-                    set_xpub_export(&ui, &state, network);
-                }
-                _ => {
-                    ui.global::<Callbacks>().set_export_error(tr::lookup_id(TrId::XpubInvalidAccount).into())
-                }
-            }
-        });
-    }
-
     // -- animated crypto-account QR ----------------------------------------
     {
         let state = state.clone();
         ui.global::<Callbacks>().on_xpub_qr_parts(move |density| {
             let st = state.lock().unwrap();
-            let result = account_xpub(st.seed.as_bytes(), &st.secp, st.xpub_network, st.xpub_account)
-                .and_then(|xpub| {
+            let result =
+                account_xpub(st.seed.as_bytes(), &st.secp, st.xpub_network, LIANA_ACCOUNT).and_then(|xpub| {
                     transport::encode_crypto_account(
                         st.fp,
                         xpub.parent_fingerprint,
                         &xpub,
                         st.xpub_network,
-                        st.xpub_account,
+                        LIANA_ACCOUNT,
                     )
                     .map_err(|e| anyhow::anyhow!(e.to_string()))
                 });
@@ -277,7 +256,7 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
             let Some(ui) = weak.upgrade() else { return };
             let key = {
                 let st = state.lock().unwrap();
-                key_with_origin(st.seed.as_bytes(), &st.secp, st.fp, st.xpub_network, st.xpub_account)
+                key_with_origin(st.seed.as_bytes(), &st.secp, st.fp, st.xpub_network, LIANA_ACCOUNT)
                     .unwrap_or_else(|_| String::new())
             };
             let cb = ui.global::<Callbacks>();
@@ -1498,8 +1477,8 @@ fn set_xpub_export(ui: &AppWindow, state: &Arc<Mutex<AppState>>, network: Networ
         if let Err(error) = save_network_preference(&st.data_dir, network) {
             log::warn!("could not save Liana network preference: {error}");
         }
-        key_with_origin(st.seed.as_bytes(), &st.secp, st.fp, network, st.xpub_account).and_then(|key| {
-            let path = account_path(network, st.xpub_account)?.to_string();
+        key_with_origin(st.seed.as_bytes(), &st.secp, st.fp, network, LIANA_ACCOUNT).and_then(|key| {
+            let path = account_path(network, LIANA_ACCOUNT)?.to_string();
             let fp = st.fp.to_string();
             write_bridge_file(&st.data_dir, EXPORT_KEY_FILE, key.as_bytes());
             Ok((key, path, fp))
@@ -1509,7 +1488,6 @@ fn set_xpub_export(ui: &AppWindow, state: &Arc<Mutex<AppState>>, network: Networ
     cb.set_export_ok(false);
     cb.set_export_error("".into());
     cb.set_xpub_network(network_label(network).into());
-    cb.set_xpub_account(state.lock().unwrap().xpub_account.to_string().into());
     match result {
         Ok((key, path, fp)) => {
             cb.set_xpub_fingerprint(fp.into());
@@ -1562,6 +1540,7 @@ fn network_from_policy(policy: &RegisteredPolicy) -> Option<Network> {
     network_from_label(policy.network.as_str())
 }
 
+#[cfg(test)]
 fn network_from_descriptor(descriptor: &str) -> anyhow::Result<Network> {
     network_from_descriptor_with_hint(descriptor, Network::Signet)
 }
@@ -1612,6 +1591,7 @@ fn register_policy_payload(
     register_descriptor_for_network(text, seed, secp, passport_fp, network)
 }
 
+#[cfg(test)]
 fn register_descriptor(
     text: &str,
     seed: &[u8],
