@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { ButtonSection, ContentSection, HeadingLg, AppHeader,
-         TextLg, TextMd, TextSm, BasePage, ShieldPage, PageBody, JumboIcon, Icon, IconButton,
+         TextLg, TextMd, TextSm, BasePage, ShieldPage, PageBody, JumboIcon, IconButton,
          OverlayMenu, PopupMenuItem } from "@ui/widgets.slint";
 import { Importance, Palette, Size, UISize, IconSize } from "@ui/theme.slint";
 import { Callbacks, PolicyRow } from "../../callbacks.slint";
@@ -63,11 +63,11 @@ export component HomePagePage inherits Rectangle {
                 alignment: center;
                 JumboIcon {
                     name: "jumbo-circle";
-                    // The Liana brand symbol, tinted neon green.
-                    Icon {
-                        name: "liana";
-                        size: IconSize.px96;
-                        color: Liana.green;
+                    Image {
+                        source: @image-url("../../../resources/liana-mark.svg");
+                        width: IconSize.px96;
+                        height: IconSize.px96;
+                        image-fit: contain;
                     }
                 }
             }
