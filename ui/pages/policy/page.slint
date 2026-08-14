@@ -89,7 +89,7 @@ export component PolicyPagePage inherits Rectangle {
                             spacing: Size.sz0_5;
                             horizontal-stretch: 1;
                             TextMd {
-                                text: s.owned ? TR2.lookup(TrId.PathThisPassport) : TR2.lookup(TrId.PathExternalKey);
+                                text: s.name;
                                 color: s.owned ? Liana.green : Palette.content-primary;
                                 bold: true;
                             }

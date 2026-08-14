@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { AppHeader, TextLg, TextMd, TextSm, BasePage,
-         ScrollBody, IconButton, JumboIcon, Icon, DynamicQrCode } from "@ui/widgets.slint";
+import { ButtonSection, ContentSection, AppHeader, TextLg, TextMd, TextSm, BasePage,
+         PageBody, IconButton, JumboIcon, Icon } from "@ui/widgets.slint";
 import { Importance, Palette, Size, IconSize } from "@ui/theme.slint";
 import { Callbacks } from "../../callbacks.slint";
 import { VerifyPageProps } from "./props.slint";
 import { Navigate } from "../../gen/navigate.slint";
 import { TR2, TrId } from "../../gen/tr.slint";
 import { Liana } from "../../liana-theme.slint";
-import { LianaCard } from "../../liana-widgets.slint";
+import { LianaButton, LianaCard } from "../../liana-widgets.slint";
 
 export component VerifyPagePage inherits Rectangle {
     in property <VerifyPageProps> props;
@@ -28,9 +28,9 @@ export component VerifyPagePage inherits Rectangle {
                 Rectangle { }
             }
 
-            ScrollBody {
+            PageBody {
                 p-x: Size.sz4;
-                VerticalLayout {
+                ContentSection {
                     spacing: Size.sz3;
 
                     HorizontalLayout {
@@ -74,15 +74,36 @@ export component VerifyPagePage inherits Rectangle {
                         }
                     }
 
-                    if Callbacks.verify-has-response: TextMd {
-                        text: TR2.lookup(TrId.VerifyResponseBody);
-                        color: Palette.content-secondary;
-                        horizontal-alignment: center;
-                        wrap: word-wrap;
+                    if Callbacks.verify-checksum != "": HorizontalLayout {
+                        alignment: center;
+                        spacing: Size.sz2;
+                        TextSm {
+                            text: TR2.lookup(TrId.VerifyPolicyChecksum);
+                            color: Palette.content-tertiary;
+                        }
+                        TextMd {
+                            text: Callbacks.verify-checksum;
+                            color: Liana.green;
+                            bold: true;
+                        }
                     }
+                }
 
-                    if Callbacks.verify-has-response: DynamicQrCode {
-                        get-parts(density) => { Callbacks.address-response-qr-parts(density); }
+                ButtonSection {
+                    if Callbacks.verify-matched: LianaButton {
+                        label: TR2.lookup(TrId.VerifyConfirm);
+                        primary: true;
+                        clicked => {
+                            Callbacks.confirm-address();
+                            if Callbacks.verify-has-response {
+                                Navigate.verify-response-page({ });
+                            }
+                        }
+                    }
+                    if !Callbacks.verify-matched: LianaButton {
+                        label: TR2.lookup(TrId.CommonButtonDone);
+                        primary: true;
+                        clicked => { Navigate.home-page({ }); }
                     }
                 }
             }

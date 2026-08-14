@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { ButtonSection, AppHeader, TextLg, TextMd, TextSm, BasePage,
-         ScrollBody, IconButton, OverlayMenu, PopupMenuItem, TitledInput } from "@ui/widgets.slint";
+         ScrollBody, IconButton, OverlayMenu, PopupMenuItem } from "@ui/widgets.slint";
 import { Importance, Palette, Size } from "@ui/theme.slint";
 import { Callbacks } from "../../callbacks.slint";
 import { XpubPageProps } from "./props.slint";
@@ -83,15 +83,6 @@ export component XpubPagePage inherits Rectangle {
                                     : TR2.lookup(TrId.XpubNetworkSignet);
                             color: Liana.green;
                         }
-                    }
-                    TitledInput {
-                        title: TR2.lookup(TrId.XpubAccount);
-                        text: Callbacks.xpub-account;
-                        input-type: InputType.number;
-                        bounded-number: true;
-                        minimum: "0";
-                        maximum: "2147483647";
-                        edited(value) => { Callbacks.set-xpub-account(value); }
                     }
                     Step {
                         number: "1";

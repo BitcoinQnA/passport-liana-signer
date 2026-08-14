@@ -1,12 +1,13 @@
 // psbt.rs — match a PSBT against a registered policy and determine the active
 // spend branch. This is the security gate's input: we only sign what matches.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::bitcoin::bip32::Fingerprint;
 use super::bitcoin::psbt;
 use super::bitcoin::sighash::EcdsaSighashType;
 use super::bitcoin::Psbt;
+use super::miniscript::psbt::{PsbtInputExt, PsbtOutputExt};
 use super::{descriptor, RegisteredPolicy, Result, SpendPathKind};
 
 /// Outcome of matching a PSBT against a registered policy.
@@ -30,18 +31,15 @@ pub struct MatchResult {
     pub expected_signatures: usize,
     pub matched_inputs: usize,
     pub total_inputs: usize,
+    /// Output indexes proven to belong to this policy using the complete PSBT
+    /// derivation map and output script.
+    pub change_outputs: HashSet<usize>,
     /// Human-readable notes for the signing-review screen / debugging.
     pub reasons: Vec<String>,
 }
 
 /// Match a PSBT against a single registered policy.
-/// `gap` is how many derivation indices to check per descriptor path.
-pub fn match_psbt(
-    psbt: &Psbt,
-    policy: &RegisteredPolicy,
-    passport_fp: Fingerprint,
-    gap: u32,
-) -> Result<MatchResult> {
+pub fn match_psbt(psbt: &Psbt, policy: &RegisteredPolicy, passport_fp: Fingerprint) -> Result<MatchResult> {
     let parsed = descriptor::import(&policy.descriptor)?;
     let singles = parsed
         .descriptor
@@ -49,35 +47,18 @@ pub fn match_psbt(
         .into_single_descriptors()
         .map_err(|e| super::Error::Match(format!("multipath split: {e}")))?;
 
-    // Precompute candidate scriptPubKeys and witnessScripts for each path/index.
-    // The scriptPubKey identifies which registered policy owns the input; the
-    // witnessScript check makes sure the signer is not asked to sign against
-    // inconsistent PSBT metadata.
-    let mut candidates: HashMap<super::bitcoin::ScriptBuf, HashSet<super::bitcoin::ScriptBuf>> =
-        HashMap::new();
-    for single in &singles {
-        for idx in 0..gap {
-            if let Ok(def) = single.at_derivation_index(idx) {
-                let witness_script = def
-                    .explicit_script()
-                    .map_err(|e| super::Error::Match(format!("explicit script: {e}")))?;
-                candidates
-                    .entry(def.script_pubkey())
-                    .or_default()
-                    .insert(witness_script);
-            }
-        }
-    }
-
     let total_inputs = psbt.inputs.len();
     let mut matched_inputs = 0;
+    let mut expected_signatures = 0usize;
     let mut reasons = Vec::new();
 
     for (i, input) in psbt.inputs.iter().enumerate() {
-        match input.witness_utxo.as_ref() {
-            Some(utxo) if candidates.contains_key(&utxo.script_pubkey) => matched_inputs += 1,
-            Some(_) => reasons.push(format!("input {i}: scriptPubKey not from this policy")),
-            None => reasons.push(format!("input {i}: no witness_utxo (cannot verify)")),
+        match match_input(input, &singles, passport_fp) {
+            Ok(owned_keys) => {
+                matched_inputs += 1;
+                expected_signatures = expected_signatures.saturating_add(owned_keys);
+            }
+            Err(reason) => reasons.push(format!("input {i}: {reason}")),
         }
     }
     let matched = total_inputs > 0 && matched_inputs == total_inputs;
@@ -92,41 +73,42 @@ pub fn match_psbt(
             expected_signatures: 0,
             matched_inputs,
             total_inputs,
+            change_outputs: HashSet::new(),
             reasons,
         });
     }
 
-    if let Err(reason) = validate_psbt_safety(psbt, &candidates) {
-        reasons.push(reason);
-        return Ok(MatchResult {
-            matched: true,
-            active_path: None,
-            active_timelock_blocks: None,
-            passport_can_sign: false,
-            passport_derivation_inputs: 0,
-            expected_signatures: 0,
-            matched_inputs,
-            total_inputs,
-            reasons,
-        });
-    }
+    let change_outputs = match validate_psbt_safety(psbt, &singles, passport_fp) {
+        Ok(change_outputs) => change_outputs,
+        Err(reason) => {
+            reasons.push(reason);
+            return Ok(MatchResult {
+                matched: true,
+                active_path: None,
+                active_timelock_blocks: None,
+                passport_can_sign: false,
+                passport_derivation_inputs: 0,
+                expected_signatures: 0,
+                matched_inputs,
+                total_inputs,
+                change_outputs: HashSet::new(),
+                reasons,
+            });
+        }
+    };
 
-    // Infer the active branch from every input's nSequence. For a decaying
-    // (multi-tier) policy, a relative-block nSequence unlocks every recovery
-    // tier whose older(n) it satisfies; the deepest tier reached (largest n)
-    // is the one being exercised. Mixed active branches are refused because a
-    // single signing confirmation would be ambiguous.
-    let input_paths: Vec<Option<u32>> = psbt
+    // A sequence may make several Miniscript paths valid at once. Preserve
+    // that fact instead of assuming the deepest unlocked recovery path is the
+    // one being used. Every input must expose the same compatible path set so
+    // one review cannot conceal mixed authorization conditions.
+    let input_paths: Vec<Vec<(SpendPathKind, Option<u32>)>> = psbt
         .unsigned_tx
         .input
         .iter()
-        .map(|txin| {
-            let seq_blocks = relative_blocks(txin.sequence);
-            deepest_unlocked_recovery(policy, seq_blocks)
-        })
+        .map(|txin| compatible_paths(policy, psbt.unsigned_tx.version.0, txin.sequence))
         .collect();
-    let first_path = input_paths.first().copied().flatten();
-    if input_paths.iter().any(|p| *p != first_path) {
+    let first_paths = input_paths.first().cloned().unwrap_or_default();
+    if input_paths.iter().any(|paths| *paths != first_paths) {
         reasons.push("inputs use mixed primary/recovery spend paths".into());
         return Ok(MatchResult {
             matched: true,
@@ -137,65 +119,48 @@ pub fn match_psbt(
             expected_signatures: 0,
             matched_inputs,
             total_inputs,
+            change_outputs: HashSet::new(),
             reasons,
         });
     }
 
-    let (active_path, active_timelock_blocks) = match first_path {
-        Some(n) => {
-            if psbt.unsigned_tx.version.0 < 2 {
-                reasons.push(
-                    "recovery spends require transaction version 2 or higher for BIP68".into(),
-                );
-                return Ok(MatchResult {
-                    matched: true,
-                    active_path: None,
-                    active_timelock_blocks: None,
-                    passport_can_sign: false,
-                    passport_derivation_inputs: 0,
-                    expected_signatures: 0,
-                    matched_inputs,
-                    total_inputs,
-                    reasons,
-                });
-            }
-            reasons.push(format!("nSequence unlocks recovery older({n})"));
-            (SpendPathKind::Recovery, Some(n))
-        }
-        None => (SpendPathKind::Primary, None),
-    };
-
     // The PSBT must reference Passport's key in segwit-v0 bip32 origins on
-    // every policy input, and Passport must own a key on the active path. A key
-    // on a not-yet-matured tier cannot sign, and a PSBT that references Passport
-    // for only some inputs must be refused instead of partially signed.
+    // every policy input, and Passport must own a key on at least one path that
+    // is compatible with every input's lock conditions.
     let passport_derivation_inputs = psbt
         .inputs
         .iter()
-        .filter(|inp| {
-            inp.bip32_derivation
-                .values()
-                .any(|(fp, _)| *fp == passport_fp)
-        })
+        .filter(|inp| inp.bip32_derivation.values().any(|(fp, _)| *fp == passport_fp))
         .count();
     let fp_str = passport_fp.to_string();
-    let owns_active_key = policy.paths.iter().any(|p| {
-        let active = match (active_path, p.kind) {
-            (SpendPathKind::Primary, SpendPathKind::Primary) => true,
-            (SpendPathKind::Recovery, SpendPathKind::Recovery) => {
-                p.relative_timelock_blocks == active_timelock_blocks
-            }
-            _ => false,
-        };
-        active && p.signer_fingerprints.contains(&fp_str)
-    });
-    let expected_signatures = if owns_active_key { total_inputs } else { 0 };
-    let passport_can_sign = owns_active_key && passport_derivation_inputs == expected_signatures;
+    let mut owned_compatible: Vec<(SpendPathKind, Option<u32>)> = first_paths
+        .iter()
+        .copied()
+        .filter(|(kind, timelock)| {
+            policy.paths.iter().any(|path| {
+                path.kind == *kind
+                    && path.relative_timelock_blocks == *timelock
+                    && path.signer_fingerprints.contains(&fp_str)
+            })
+        })
+        .collect();
+    owned_compatible
+        .sort_by_key(|(kind, timelock)| (matches!(kind, SpendPathKind::Recovery), timelock.unwrap_or(0)));
+    let selected = owned_compatible.first().copied();
+    let (active_path, active_timelock_blocks) = selected.unwrap_or((SpendPathKind::Primary, None));
+    for (_, timelock) in &owned_compatible {
+        if let Some(blocks) = timelock {
+            reasons.push(format!("nSequence permits recovery older({blocks})"));
+        }
+    }
+    let owns_active_key = selected.is_some();
+    let passport_can_sign =
+        owns_active_key && expected_signatures > 0 && passport_derivation_inputs == total_inputs;
     if !owns_active_key {
         reasons.push("Passport key is not on the active spend path".into());
-    } else if passport_derivation_inputs != expected_signatures {
+    } else if passport_derivation_inputs != total_inputs {
         reasons.push(format!(
-            "Passport key is referenced by {passport_derivation_inputs} of {expected_signatures} policy inputs; refusing partial signing"
+            "Passport key is referenced by {passport_derivation_inputs} of {total_inputs} policy inputs; refusing partial signing"
         ));
     }
 
@@ -208,6 +173,7 @@ pub fn match_psbt(
         expected_signatures,
         matched_inputs,
         total_inputs,
+        change_outputs,
         reasons,
     })
 }
@@ -217,11 +183,10 @@ pub fn match_against_all<'a>(
     psbt: &Psbt,
     policies: &'a [RegisteredPolicy],
     passport_fp: Fingerprint,
-    gap: u32,
 ) -> Result<Option<(&'a RegisteredPolicy, MatchResult)>> {
     let mut matched: Option<(&'a RegisteredPolicy, MatchResult)> = None;
     for p in policies {
-        let r = match_psbt(psbt, p, passport_fp, gap)?;
+        let r = match_psbt(psbt, p, passport_fp)?;
         if r.matched {
             if matched.is_some() {
                 return Err(super::Error::Match(
@@ -242,54 +207,60 @@ fn relative_blocks(seq: super::bitcoin::Sequence) -> Option<u32> {
     })
 }
 
-fn deepest_unlocked_recovery(policy: &RegisteredPolicy, seq_blocks: Option<u32>) -> Option<u32> {
+fn compatible_paths(
+    policy: &RegisteredPolicy,
+    transaction_version: i32,
+    sequence: super::bitcoin::Sequence,
+) -> Vec<(SpendPathKind, Option<u32>)> {
+    let sequence_blocks = relative_blocks(sequence);
     policy
         .paths
         .iter()
-        .filter(|p| matches!(p.kind, SpendPathKind::Recovery))
-        .filter_map(|p| match (seq_blocks, p.relative_timelock_blocks) {
-            (Some(s), Some(n)) if s >= n => Some(n),
-            _ => None,
+        .filter(|path| match path.kind {
+            SpendPathKind::Primary => true,
+            SpendPathKind::Recovery => {
+                transaction_version >= 2
+                    && matches!(
+                        (sequence_blocks, path.relative_timelock_blocks),
+                        (Some(sequence), Some(required)) if sequence >= required
+                    )
+            }
         })
-        .max()
+        .map(|path| (path.kind, path.relative_timelock_blocks))
+        .collect()
 }
 
 fn validate_psbt_safety(
     psbt: &Psbt,
-    candidates: &HashMap<super::bitcoin::ScriptBuf, HashSet<super::bitcoin::ScriptBuf>>,
-) -> std::result::Result<(), String> {
+    singles: &[super::miniscript::Descriptor<super::miniscript::DescriptorPublicKey>],
+    passport_fp: Fingerprint,
+) -> std::result::Result<HashSet<usize>, String> {
     if psbt.inputs.len() != psbt.unsigned_tx.input.len() {
         return Err("PSBT input map count does not match unsigned transaction inputs".into());
+    }
+    if psbt.outputs.len() != psbt.unsigned_tx.output.len() {
+        return Err("PSBT output map count does not match unsigned transaction outputs".into());
     }
 
     let mut input_sum = 0u64;
     for (i, input) in psbt.inputs.iter().enumerate() {
         validate_sighash(i, input)?;
         if input.redeem_script.is_some() {
-            return Err(format!(
-                "input {i}: redeem_script is not supported for native P2WSH policies"
-            ));
+            return Err(format!("input {i}: redeem_script is not supported for native P2WSH policies"));
         }
         let utxo = input
             .witness_utxo
             .as_ref()
             .ok_or_else(|| format!("input {i}: no witness_utxo (cannot verify amount)"))?;
-        let allowed_scripts = candidates
-            .get(&utxo.script_pubkey)
-            .ok_or_else(|| format!("input {i}: scriptPubKey not from this policy"))?;
         let witness_script = input
             .witness_script
             .as_ref()
             .ok_or_else(|| format!("input {i}: missing witness_script for P2WSH spend"))?;
-        if !allowed_scripts.contains(witness_script) {
-            return Err(format!(
-                "input {i}: witness_script does not match the registered policy"
-            ));
-        }
+        let _ = witness_script;
+        match_input(input, singles, passport_fp).map_err(|reason| format!("input {i}: {reason}"))?;
         validate_non_witness_utxo(i, psbt, input, utxo)?;
-        input_sum = input_sum
-            .checked_add(utxo.value.to_sat())
-            .ok_or_else(|| "input amount overflow".to_string())?;
+        input_sum =
+            input_sum.checked_add(utxo.value.to_sat()).ok_or_else(|| "input amount overflow".to_string())?;
     }
 
     let mut output_sum = 0u64;
@@ -303,17 +274,120 @@ fn validate_psbt_safety(
         return Err("transaction outputs exceed verified inputs".into());
     }
 
-    Ok(())
+    let mut change_outputs = HashSet::new();
+    for (index, (output, txout)) in psbt.outputs.iter().zip(&psbt.unsigned_tx.output).enumerate() {
+        match match_output(output, txout, singles, passport_fp) {
+            Ok(true) => {
+                change_outputs.insert(index);
+            }
+            Ok(false) => {}
+            Err(reason) => return Err(format!("output {index}: {reason}")),
+        }
+    }
+
+    Ok(change_outputs)
+}
+
+fn derivation_indexes(
+    derivations: &std::collections::BTreeMap<
+        super::bitcoin::secp256k1::PublicKey,
+        super::bitcoin::bip32::KeySource,
+    >,
+) -> HashSet<u32> {
+    derivations
+        .values()
+        .filter_map(|(_, path)| path.into_iter().next_back())
+        .filter_map(|child| match child {
+            super::bitcoin::bip32::ChildNumber::Normal { index } => Some(*index),
+            super::bitcoin::bip32::ChildNumber::Hardened { .. } => None,
+        })
+        .collect()
+}
+
+fn match_input(
+    input: &psbt::Input,
+    singles: &[super::miniscript::Descriptor<super::miniscript::DescriptorPublicKey>],
+    passport_fp: Fingerprint,
+) -> std::result::Result<usize, String> {
+    let utxo = input.witness_utxo.as_ref().ok_or_else(|| "no witness_utxo (cannot verify)".to_string())?;
+    let witness_script =
+        input.witness_script.as_ref().ok_or_else(|| "missing witness_script for P2WSH spend".to_string())?;
+    let indexes = derivation_indexes(&input.bip32_derivation);
+    if indexes.is_empty() {
+        return Err("missing unhardened policy derivations".into());
+    }
+
+    let mut matches = Vec::new();
+    for descriptor in singles {
+        for index in &indexes {
+            let Ok(definite) = descriptor.at_derivation_index(*index) else {
+                continue;
+            };
+            let mut expected = psbt::Input::default();
+            let Ok(derived) = expected.update_with_descriptor_unchecked(&definite) else {
+                continue;
+            };
+            if derived.script_pubkey() == utxo.script_pubkey
+                && expected.witness_script.as_ref() == Some(witness_script)
+                && expected.bip32_derivation == input.bip32_derivation
+            {
+                let owned = expected
+                    .bip32_derivation
+                    .values()
+                    .filter(|(fingerprint, _)| *fingerprint == passport_fp)
+                    .count();
+                matches.push(owned);
+            }
+        }
+    }
+
+    match matches.as_slice() {
+        [owned] if *owned > 0 => Ok(*owned),
+        [..] if matches.len() > 1 => Err("derivations match the policy ambiguously".into()),
+        _ => Err("scripts and derivations do not match the registered policy".into()),
+    }
+}
+
+fn match_output(
+    output: &psbt::Output,
+    txout: &super::bitcoin::TxOut,
+    singles: &[super::miniscript::Descriptor<super::miniscript::DescriptorPublicKey>],
+    passport_fp: Fingerprint,
+) -> std::result::Result<bool, String> {
+    if !output.bip32_derivation.values().any(|(fingerprint, _)| *fingerprint == passport_fp) {
+        return Ok(false);
+    }
+    let indexes = derivation_indexes(&output.bip32_derivation);
+    let mut matches = 0usize;
+    for descriptor in singles {
+        for index in &indexes {
+            let Ok(definite) = descriptor.at_derivation_index(*index) else {
+                continue;
+            };
+            let mut expected = psbt::Output::default();
+            let Ok(derived) = expected.update_with_descriptor_unchecked(&definite) else {
+                continue;
+            };
+            if derived.script_pubkey() == txout.script_pubkey
+                && expected.bip32_derivation == output.bip32_derivation
+                && (output.witness_script.is_none() || output.witness_script == expected.witness_script)
+                && output.redeem_script == expected.redeem_script
+            {
+                matches += 1;
+            }
+        }
+    }
+    match matches {
+        0 => Err("derivations do not match a registered-policy output".into()),
+        1 => Ok(true),
+        _ => Err("derivations match the policy ambiguously".into()),
+    }
 }
 
 fn validate_sighash(i: usize, input: &psbt::Input) -> std::result::Result<(), String> {
-    let sighash = input
-        .ecdsa_hash_ty()
-        .map_err(|e| format!("input {i}: non-standard sighash type: {e}"))?;
+    let sighash = input.ecdsa_hash_ty().map_err(|e| format!("input {i}: non-standard sighash type: {e}"))?;
     if sighash != EcdsaSighashType::All {
-        return Err(format!(
-            "input {i}: unsupported sighash type {sighash}; only SIGHASH_ALL is allowed"
-        ));
+        return Err(format!("input {i}: unsupported sighash type {sighash}; only SIGHASH_ALL is allowed"));
     }
     Ok(())
 }
@@ -332,18 +406,16 @@ fn validate_non_witness_utxo(
     };
     let prevout = txin.previous_output;
     if prev_tx.compute_txid() != prevout.txid {
-        return Err(format!(
-            "input {i}: non_witness_utxo txid does not match prevout"
-        ));
+        return Err(format!("input {i}: non_witness_utxo txid does not match prevout"));
     }
     let prev_output = prev_tx
         .output
         .get(prevout.vout as usize)
         .ok_or_else(|| format!("input {i}: prevout index is outside non_witness_utxo outputs"))?;
     if prev_output != witness_utxo {
-        return Err(format!(
-            "input {i}: witness_utxo does not match non_witness_utxo prevout"
-        ));
+        return Err(format!("input {i}: witness_utxo does not match non_witness_utxo prevout"));
     }
     Ok(())
 }
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: GPL-3.0-or-later

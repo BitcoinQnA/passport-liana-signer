@@ -1,0 +1,71 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import { ButtonSection, AppHeader, TextMd, TextSm, BasePage,
+         ScrollBody, IconButton, TitledInput } from "@ui/widgets.slint";
+import { Importance, Palette, Size } from "@ui/theme.slint";
+import { Callbacks } from "../../callbacks.slint";
+import { SignersPageProps } from "./props.slint";
+import { Navigate } from "../../gen/navigate.slint";
+import { TR2, TrId } from "../../gen/tr.slint";
+import { Liana } from "../../liana-theme.slint";
+import { LianaButton } from "../../liana-widgets.slint";
+
+export component SignersPagePage inherits Rectangle {
+    in property <SignersPageProps> props;
+
+    BasePage {
+        VerticalLayout {
+            AppHeader {
+                title: TR2.lookup(TrId.SignersTitle);
+                side-padding: Size.sz6;
+                IconButton {
+                    icon: "chevron-left";
+                    size: Size.sz8;
+                    importance: Importance.normal;
+                    clicked => { Navigate.backward(); }
+                }
+                Rectangle { }
+            }
+
+            ScrollBody {
+                p-x: Size.sz4;
+                VerticalLayout {
+                    spacing: Size.sz3;
+                    TextMd {
+                        text: TR2.lookup(TrId.SignersBody);
+                        color: Palette.content-secondary;
+                        wrap: word-wrap;
+                    }
+                    for signer in Callbacks.detail-signers: VerticalLayout {
+                        if signer.owned: VerticalLayout {
+                            spacing: Size.sz1;
+                            TextMd { text: signer.name; color: Liana.green; bold: true; }
+                            TextSm {
+                                text: TR2.format(TrId.ImportPathsKeyFingerprint, [signer.fingerprint]);
+                                color: Palette.content-tertiary;
+                            }
+                        }
+                        if !signer.owned: TitledInput {
+                            title: TR2.format(TrId.ImportPathsNameSigner, [signer.fingerprint]);
+                            text: signer.name;
+                            caps-mode: sentences;
+                            character-limit: 20;
+                            accepted(value) => {
+                                Callbacks.rename-signer(Callbacks.detail-id, signer.id, value);
+                            }
+                        }
+                    }
+                }
+            }
+
+            ButtonSection {
+                LianaButton {
+                    label: TR2.lookup(TrId.CommonButtonDone);
+                    primary: true;
+                    clicked => { Navigate.policy-page({ }); }
+                }
+            }
+        }
+    }
+}

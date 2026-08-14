@@ -13,7 +13,7 @@ path; release builds leave both disabled.
 > the real-Passport-Prime mechanism (USB/Airlock) and is still wired in. Without
 > the `sim-bridge` feature, the app ignores these host files. Without the
 > `dev-seed` feature, a host build will not fall back to the deterministic
-> simulator seed when `security.app_seed()` is unavailable.
+> simulator wallet entropy when `security.seed()` is unavailable.
 >
 > **You must build the Liana wallet with the SIM's own key.** Export Xpub in the
 > sim shows the device fingerprint (e.g. `6ac68ab8`); use *that* key in Liana, or
@@ -91,3 +91,5 @@ path; release builds leave both disabled.
 - Network is hardcoded to **Signet** (`tpub`). Liana must be in Signet too.
 - On real hardware, the same files move via microSD / USB mass-storage instead of
   the shared folder (device bring-up is a later milestone).
+<!-- SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->

@@ -38,8 +38,7 @@ pub fn import(text: &str) -> Result<ParsedDescriptor> {
         Descriptor::Wsh(_) => validate_liana_wsh(&descriptor)?,
         Descriptor::Tr(_) => {
             return Err(Error::Unsupported(
-                "Taproot (tr) Liana descriptors are not supported in this release; use P2WSH (wsh)"
-                    .into(),
+                "Taproot (tr) Liana descriptors are not supported in this release; use P2WSH (wsh)".into(),
             ))
         }
         other => {
@@ -58,18 +57,12 @@ pub fn import(text: &str) -> Result<ParsedDescriptor> {
         .ok_or_else(|| Error::Parse("descriptor has no checksum".into()))?
         .to_string();
 
-    Ok(ParsedDescriptor {
-        descriptor,
-        checksum,
-        canonical,
-    })
+    Ok(ParsedDescriptor { descriptor, checksum, canonical })
 }
 
 fn has_explicit_checksum(text: &str) -> bool {
     text.rsplit_once('#')
-        .map(|(_, checksum)| {
-            checksum.len() == 8 && checksum.chars().all(|c| c.is_ascii_alphanumeric())
-        })
+        .map(|(_, checksum)| checksum.len() == 8 && checksum.chars().all(|c| c.is_ascii_alphanumeric()))
         .unwrap_or(false)
 }
 
@@ -85,23 +78,15 @@ fn kind_name(d: &Descriptor<DescriptorPublicKey>) -> &'static str {
 }
 
 fn validate_liana_wsh(desc: &Descriptor<DescriptorPublicKey>) -> Result<()> {
-    let singles = desc
-        .clone()
-        .into_single_descriptors()
-        .map_err(|e| Error::Parse(format!("multipath split: {e}")))?;
-    let first = singles
-        .first()
-        .ok_or_else(|| Error::Parse("descriptor produced no paths".into()))?;
-    let policy = first
-        .lift()
-        .map_err(|e| Error::Parse(format!("lift to policy: {e}")))?;
+    let singles =
+        desc.clone().into_single_descriptors().map_err(|e| Error::Parse(format!("multipath split: {e}")))?;
+    let first = singles.first().ok_or_else(|| Error::Parse("descriptor produced no paths".into()))?;
+    let policy = first.lift().map_err(|e| Error::Parse(format!("lift to policy: {e}")))?;
 
     let mut branches = Vec::new();
     collect_branches(&policy, &mut branches);
     if branches.is_empty() {
-        return Err(Error::Unsupported(
-            "Liana P2WSH policy has no spendable branches".into(),
-        ));
+        return Err(Error::Unsupported("Liana P2WSH policy has no spendable branches".into()));
     }
 
     let mut primary_paths = 0usize;
@@ -109,9 +94,7 @@ fn validate_liana_wsh(desc: &Descriptor<DescriptorPublicKey>) -> Result<()> {
     for branch in branches {
         reject_unsupported_nodes(branch)?;
         if key_count(branch) == 0 {
-            return Err(Error::Unsupported(
-                "Liana P2WSH branches must contain at least one key".into(),
-            ));
+            return Err(Error::Unsupported("Liana P2WSH branches must contain at least one key".into()));
         }
 
         let mut olders = Vec::new();
@@ -169,18 +152,15 @@ fn collect_branches<'a>(sem: &'a Sem, out: &mut Vec<&'a Sem>) {
 
 fn reject_unsupported_nodes(sem: &Sem) -> Result<()> {
     match sem {
-        Semantic::Unsatisfiable | Semantic::Trivial => Err(Error::Unsupported(
-            "Liana P2WSH branches must not be trivial or unsatisfiable".into(),
-        )),
-        Semantic::After(_) => Err(Error::Unsupported(
-            "absolute locktimes are not supported in Liana P2WSH policies".into(),
-        )),
-        Semantic::Sha256(_)
-        | Semantic::Hash256(_)
-        | Semantic::Ripemd160(_)
-        | Semantic::Hash160(_) => Err(Error::Unsupported(
-            "hashlock/preimage policies are not supported".into(),
-        )),
+        Semantic::Unsatisfiable | Semantic::Trivial => {
+            Err(Error::Unsupported("Liana P2WSH branches must not be trivial or unsatisfiable".into()))
+        }
+        Semantic::After(_) => {
+            Err(Error::Unsupported("absolute locktimes are not supported in Liana P2WSH policies".into()))
+        }
+        Semantic::Sha256(_) | Semantic::Hash256(_) | Semantic::Ripemd160(_) | Semantic::Hash160(_) => {
+            Err(Error::Unsupported("hashlock/preimage policies are not supported".into()))
+        }
         Semantic::Thresh(t) => {
             for child in t.iter() {
                 reject_unsupported_nodes(child.as_ref())?;
@@ -210,3 +190,5 @@ fn collect_older_locks<'a>(sem: &'a Sem, out: &mut Vec<&'a super::miniscript::Re
         _ => {}
     }
 }
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: GPL-3.0-or-later

@@ -52,8 +52,21 @@ export component ImportDonePagePage inherits Rectangle {
 
                 ButtonSection {
                     LianaButton {
-                        label: TR2.lookup(TrId.CommonButtonDone);
+                        label: TR2.lookup(TrId.ImportDoneVerifyAddress);
                         primary: true;
+                        clicked => {
+                            Callbacks.verify-address(Callbacks.detail-id);
+                            if Callbacks.verify-ready { Navigate.verify-page({ }); }
+                        }
+                    }
+                    LianaButton {
+                        label: TR2.lookup(TrId.ImportDoneBackupPolicy);
+                        primary: false;
+                        clicked => { Navigate.descriptor-qr-page({ }); }
+                    }
+                    LianaButton {
+                        label: TR2.lookup(TrId.CommonButtonDone);
+                        primary: false;
                         clicked => { Navigate.home-page({ }); }
                     }
                 }

@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="-100 0 1200 1200">
+<!-- SPDX-FileCopyrightText: 2022 The Liana developers -->
+<!-- SPDX-License-Identifier: BSD-3-Clause -->
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="120" viewBox="0 0 1000 1200">
   <path fill="#00FF66" d="M500,1068.33h0c193.99,0,351.25-157.26,351.25-351.25h0c-193.99,0-351.25,157.26-351.25,351.25Z"/>
   <path fill="#00FF66" d="M500,131.67h0c-193.99,0-351.25,157.26-351.25,351.25v585.42h0c193.99,0,351.25-157.26,351.25-351.25V131.67Z"/>
 </svg>

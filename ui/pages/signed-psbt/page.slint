@@ -1,0 +1,78 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import { ButtonSection, ContentSection, AppHeader, TextMd, TextSm, BasePage,
+         PageBody, IconButton, OverlayMenu, PopupMenuItem } from "@ui/widgets.slint";
+import { Importance, Palette, Size } from "@ui/theme.slint";
+import { Callbacks } from "../../callbacks.slint";
+import { SignedPsbtPageProps } from "./props.slint";
+import { Navigate } from "../../gen/navigate.slint";
+import { TR2, TrId } from "../../gen/tr.slint";
+import { Liana } from "../../liana-theme.slint";
+import { LianaButton } from "../../liana-widgets.slint";
+import { LianaDynamicQrCode } from "../../liana-dynamic-qr.slint";
+
+export component SignedPsbtPagePage inherits Rectangle {
+    in property <SignedPsbtPageProps> props;
+    property <bool> is-menu-open: false;
+
+    BasePage {
+        VerticalLayout {
+            AppHeader {
+                title: TR2.lookup(TrId.ReviewSignedTitle);
+                side-padding: Size.sz6;
+                Rectangle { }
+                IconButton {
+                    icon: "ellipsis";
+                    size: Size.sz8;
+                    importance: Importance.normal;
+                    clicked => { is-menu-open = !is-menu-open; }
+                }
+            }
+
+            PageBody {
+                p-x: Size.sz4;
+                ContentSection {
+                    spacing: Size.sz3;
+                    TextMd {
+                        text: TR2.lookup(TrId.ReviewSignedBody);
+                        color: Palette.content-secondary;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    if Callbacks.review-qr-available: LianaDynamicQrCode {
+                        get-parts(density) => { Callbacks.signed-psbt-qr-parts(density); }
+                    }
+                    if Callbacks.review-signed-detail != "": TextSm {
+                        text: Callbacks.review-signed-detail;
+                        color: Palette.content-secondary;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+                ButtonSection {
+                    LianaButton {
+                        label: TR2.lookup(TrId.CommonButtonDone);
+                        primary: true;
+                        clicked => { Navigate.home-page({ }); }
+                    }
+                }
+            }
+        }
+    }
+
+    if is-menu-open: OverlayMenu {
+        touched-off => { is-menu-open = false; }
+        PopupMenuItem {
+            label: TR2.lookup(TrId.ReviewSaveToFile);
+            icon: "save";
+            first: true;
+            last: true;
+            clicked => {
+                is-menu-open = false;
+                Callbacks.export-signed();
+                if Callbacks.export-ok { Navigate.export-done-page({ }); }
+            }
+        }
+    }
+}

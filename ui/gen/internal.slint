@@ -9,11 +9,16 @@ import { ExportDonePageProps } from "../pages/export-done/props.slint";
 import { ImportDonePageProps } from "../pages/import-done/props.slint";
 import { ImportPathsPageProps } from "../pages/import-paths/props.slint";
 import { ImportReviewPageProps } from "../pages/import-review/props.slint";
+import { PassphrasePageProps } from "../pages/passphrase/props.slint";
 import { PolicyPageProps } from "../pages/policy/props.slint";
 import { RenamePageProps } from "../pages/rename/props.slint";
 import { ReviewPageProps } from "../pages/review/props.slint";
+import { SignedPsbtPageProps } from "../pages/signed-psbt/props.slint";
+import { SignersPageProps } from "../pages/signers/props.slint";
 import { VerifyPageProps } from "../pages/verify/props.slint";
+import { VerifyResponsePageProps } from "../pages/verify-response/props.slint";
 import { XpubPageProps } from "../pages/xpub/props.slint";
+import { XpubFinishPageProps } from "../pages/xpub-finish/props.slint";
 import { XpubSavePageProps } from "../pages/xpub-save/props.slint";
 
 // INTERNAL ROUTER COMPONENT. DO NOT USE.
@@ -27,11 +32,16 @@ export enum RouteOption {
     ImportDonePage,
     ImportPathsPage,
     ImportReviewPage,
+    PassphrasePage,
     PolicyPage,
     RenamePage,
     ReviewPage,
+    SignedPsbtPage,
+    SignersPage,
     VerifyPage,
+    VerifyResponsePage,
     XpubPage,
+    XpubFinishPage,
     XpubSavePage,
 }
 // INTERNAL ROUTER COMPONENT. DO NOT USE.
@@ -46,10 +56,15 @@ export global RouteState {
     in-out property <ImportDonePageProps> import-done-page-props;
     in-out property <ImportPathsPageProps> import-paths-page-props;
     in-out property <ImportReviewPageProps> import-review-page-props;
+    in-out property <PassphrasePageProps> passphrase-page-props;
     in-out property <PolicyPageProps> policy-page-props;
     in-out property <RenamePageProps> rename-page-props;
     in-out property <ReviewPageProps> review-page-props;
+    in-out property <SignedPsbtPageProps> signed-psbt-page-props;
+    in-out property <SignersPageProps> signers-page-props;
     in-out property <VerifyPageProps> verify-page-props;
+    in-out property <VerifyResponsePageProps> verify-response-page-props;
     in-out property <XpubPageProps> xpub-page-props;
+    in-out property <XpubFinishPageProps> xpub-finish-page-props;
     in-out property <XpubSavePageProps> xpub-save-page-props;
 }

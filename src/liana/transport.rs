@@ -45,17 +45,20 @@ impl PolicyNetwork {
     pub fn from_network(network: Network) -> Result<Self> {
         match network {
             Network::Bitcoin => Ok(Self::Btc),
-            Network::Signet => Ok(Self::Tbtc),
+            Network::Signet | Network::Testnet | Network::Testnet4 => Ok(Self::Tbtc),
             _ => Err(Error::Unsupported(
-                "Liana QR supports Bitcoin mainnet and Signet only".into(),
+                "Liana QR supports Bitcoin mainnet and public test networks only".into(),
             )),
         }
     }
 
-    pub fn bitcoin(self) -> Network {
+    pub fn bitcoin(self, selected_test_network: Network) -> Network {
         match self {
             Self::Btc => Network::Bitcoin,
-            Self::Tbtc => Network::Signet,
+            Self::Tbtc => match selected_test_network {
+                Network::Signet | Network::Testnet | Network::Testnet4 => selected_test_network,
+                _ => Network::Signet,
+            },
         }
     }
 
@@ -110,16 +113,15 @@ impl PolicyRegistration {
     }
 
     pub fn from_registered(policy: &RegisteredPolicy) -> Result<Self> {
-        if policy.policy_id.is_empty()
-            || policy.policy_template.is_empty()
-            || policy.policy_keys.is_empty()
-        {
+        if policy.policy_id.is_empty() || policy.policy_template.is_empty() || policy.policy_keys.is_empty() {
             let network = match policy.network.as_str() {
                 "bitcoin" => Network::Bitcoin,
                 "signet" => Network::Signet,
+                "testnet" => Network::Testnet,
+                "testnet4" => Network::Testnet4,
                 _ => {
                     return Err(Error::Unsupported(
-                        "registered policy is not on Bitcoin mainnet or Signet".into(),
+                        "registered policy is not on a supported Bitcoin network".into(),
                     ))
                 }
             };
@@ -131,10 +133,10 @@ impl PolicyRegistration {
             name: printable_name(&policy.name),
             network: match policy.network.as_str() {
                 "bitcoin" => PolicyNetwork::Btc,
-                "signet" => PolicyNetwork::Tbtc,
+                "signet" | "testnet" | "testnet4" => PolicyNetwork::Tbtc,
                 _ => {
                     return Err(Error::Unsupported(
-                        "registered policy is not on Bitcoin mainnet or Signet".into(),
+                        "registered policy is not on a supported Bitcoin network".into(),
                     ))
                 }
             },
@@ -160,33 +162,23 @@ impl PolicyRegistration {
         validate_printable_ascii(&self.name, 1, MAX_NAME_BYTES, "wallet name")?;
         validate_printable_ascii(&self.template, 1, MAX_TEMPLATE_BYTES, "policy template")?;
         if self.template.starts_with("tr(") {
-            return Err(Error::Unsupported(
-                "Taproot Liana policies remain disabled in this app".into(),
-            ));
+            return Err(Error::Unsupported("Taproot Liana policies remain disabled in this app".into()));
         }
         if !self.template.starts_with("wsh(") || !self.template.ends_with(')') {
-            return Err(Error::Unsupported(
-                "only top-level P2WSH Liana policies are supported".into(),
-            ));
+            return Err(Error::Unsupported("only top-level P2WSH Liana policies are supported".into()));
         }
         if self.keys.is_empty() || self.keys.len() > MAX_KEYS {
-            return Err(Error::Parse(format!(
-                "policy must contain between 1 and {MAX_KEYS} keys"
-            )));
+            return Err(Error::Parse(format!("policy must contain between 1 and {MAX_KEYS} keys")));
         }
         if placeholder_order(&self.template)? != (0..self.keys.len()).collect::<Vec<_>>() {
-            return Err(Error::Parse(
-                "policy keys must be used in canonical first-use order".into(),
-            ));
+            return Err(Error::Parse("policy keys must be used in canonical first-use order".into()));
         }
         let mut unique = HashSet::new();
         for key in &self.keys {
             let parsed = DescriptorPublicKey::from_str(key)
                 .map_err(|e| Error::Parse(format!("invalid descriptor key: {e}")))?;
             if parsed.to_string() != *key || !unique.insert(key) {
-                return Err(Error::Parse(
-                    "policy keys must be canonical and unique".into(),
-                ));
+                return Err(Error::Parse("policy keys must be canonical and unique".into()));
             }
         }
         let full = self.full_descriptor();
@@ -264,15 +256,9 @@ impl AddressVerificationRequest {
             || request.branch > 1
             || request.index >= (1 << 31)
             || request.descriptor_checksum.len() != 8
-            || !request
-                .descriptor_checksum
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric())
+            || !request.descriptor_checksum.bytes().all(|byte| byte.is_ascii_alphanumeric())
             || request.policy_id.len() != 64
-            || !request
-                .policy_id
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
+            || !request.policy_id.bytes().all(|byte| byte.is_ascii_hexdigit())
         {
             return Err(Error::Parse("invalid address-verification request".into()));
         }
@@ -295,11 +281,7 @@ pub struct AddressVerificationResponse {
 }
 
 impl AddressVerificationResponse {
-    pub fn new(
-        request: &AddressVerificationRequest,
-        address: String,
-        fingerprint: Fingerprint,
-    ) -> Self {
+    pub fn new(request: &AddressVerificationRequest, address: String, fingerprint: Fingerprint) -> Self {
         Self {
             format: ADDRESS_RESPONSE_FORMAT.into(),
             version: PROTOCOL_VERSION,
@@ -313,9 +295,7 @@ impl AddressVerificationResponse {
         }
     }
 
-    pub fn to_json(&self) -> Result<Vec<u8>> {
-        encode_json(self)
-    }
+    pub fn to_json(&self) -> Result<Vec<u8>> { encode_json(self) }
 }
 
 /// Encode the narrow legacy `crypto-account` profile shared by Passport Core,
@@ -333,56 +313,54 @@ pub fn encode_crypto_account(
     let coin_type = if network == Network::Bitcoin { 0 } else { 1 };
     let mut output = Vec::with_capacity(160);
     let mut encoder = Encoder::new(&mut output);
-    let encoded =
-        (|| -> std::result::Result<(), minicbor::encode::Error<std::convert::Infallible>> {
-            encoder
-                .map(2)?
-                .u32(1)?
-                .u32(fingerprint_u32(fingerprint))?
-                .u32(2)?
-                .array(1)?
-                .tag(Tag::new(308))?
-                .tag(Tag::new(401))?
-                .tag(Tag::new(410))?
-                .tag(Tag::new(303))?
-                .map(6)?
-                .u32(2)?
-                .bool(false)?
-                .u32(3)?
-                .bytes(&xpub.public_key.serialize())?
-                .u32(4)?
-                .bytes(xpub.chain_code.as_bytes())?
-                .u32(5)?
-                .tag(Tag::new(40305))?
-                .map(2)?
-                .u32(1)?
-                .u32(0)?
-                .u32(2)?
-                .u32(if network == Network::Bitcoin { 0 } else { 1 })?
-                .u32(6)?
-                .tag(Tag::new(40304))?
-                .map(3)?
-                .u32(1)?
-                .array(8)?;
-            for component in [48, coin_type, account, 2] {
-                encoder.u32(component)?.bool(true)?;
-            }
-            encoder
-                .u32(2)?
-                .u32(fingerprint_u32(fingerprint))?
-                .u32(3)?
-                .u8(4)?
-                .u32(8)?
-                .u32(fingerprint_u32(parent_fingerprint))?;
-            Ok(())
-        })();
+    let encoded = (|| -> std::result::Result<(), minicbor::encode::Error<std::convert::Infallible>> {
+        encoder
+            .map(2)?
+            .u32(1)?
+            .u32(fingerprint_u32(fingerprint))?
+            .u32(2)?
+            .array(1)?
+            .tag(Tag::new(308))?
+            .tag(Tag::new(401))?
+            .tag(Tag::new(410))?
+            .tag(Tag::new(303))?
+            .map(6)?
+            .u32(2)?
+            .bool(false)?
+            .u32(3)?
+            .bytes(&xpub.public_key.serialize())?
+            .u32(4)?
+            .bytes(xpub.chain_code.as_bytes())?
+            .u32(5)?
+            .tag(Tag::new(40305))?
+            .map(2)?
+            .u32(1)?
+            .u32(0)?
+            .u32(2)?
+            .u32(if network == Network::Bitcoin { 0 } else { 1 })?
+            .u32(6)?
+            .tag(Tag::new(40304))?
+            .map(3)?
+            .u32(1)?
+            .array(8)?;
+        for component in [48, coin_type, account, 2] {
+            encoder.u32(component)?.bool(true)?;
+        }
+        encoder
+            .u32(2)?
+            .u32(fingerprint_u32(fingerprint))?
+            .u32(3)?
+            .u8(4)?
+            .u32(8)?
+            .u32(fingerprint_u32(parent_fingerprint))?;
+        Ok(())
+    })();
     encoded.map_err(|e| Error::Parse(format!("encode crypto-account: {e}")))?;
     Ok(output)
 }
 
 pub fn encode_json<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    let encoded =
-        serde_json::to_vec(value).map_err(|e| Error::Parse(format!("encode JSON: {e}")))?;
+    let encoded = serde_json::to_vec(value).map_err(|e| Error::Parse(format!("encode JSON: {e}")))?;
     if encoded.len() > MAX_JSON_BYTES {
         return Err(Error::Parse("JSON envelope is too large".into()));
     }
@@ -475,9 +453,7 @@ fn descriptor_to_template(body: &str) -> Result<(String, Vec<String>)> {
             xpub_end += 1;
         }
         if xpub_end == close + 1 {
-            return Err(Error::Parse(
-                "key origin is not followed by an extended public key".into(),
-            ));
+            return Err(Error::Parse("key origin is not followed by an extended public key".into()));
         }
         let raw_key = &body[position..xpub_end];
         let key = DescriptorPublicKey::from_str(raw_key)
@@ -495,15 +471,11 @@ fn descriptor_to_template(body: &str) -> Result<(String, Vec<String>)> {
             let first = canonical_number(parts.next())?;
             let second = canonical_number(parts.next())?;
             if parts.next().is_some() || first == second {
-                return Err(Error::Parse(
-                    "exactly two distinct multipath branches are required".into(),
-                ));
+                return Err(Error::Parse("exactly two distinct multipath branches are required".into()));
             }
             (format!("/<{first};{second}>/*"), suffix_end + 3)
         } else {
-            return Err(Error::Parse(
-                "extended keys must end in /** or /<M;N>/*".into(),
-            ));
+            return Err(Error::Parse("extended keys must end in /** or /<M;N>/*".into()));
         };
         let key_index = match keys.iter().position(|existing| existing == &key) {
             Some(index) => index,
@@ -556,9 +528,7 @@ fn canonical_number(number: Option<&str>) -> Result<u32> {
     {
         return Err(Error::Parse("branch number is not canonical".into()));
     }
-    let value = number
-        .parse::<u32>()
-        .map_err(|_| Error::Parse("branch number is too large".into()))?;
+    let value = number.parse::<u32>().map_err(|_| Error::Parse("branch number is too large".into()))?;
     if value >= (1 << 31) {
         return Err(Error::Parse("branch number is too large".into()));
     }
@@ -582,9 +552,7 @@ fn encode_field(output: &mut Vec<u8>, value: &str) {
     output.extend_from_slice(value.as_bytes());
 }
 
-fn fingerprint_u32(fingerprint: Fingerprint) -> u32 {
-    u32::from_be_bytes(fingerprint.to_bytes())
-}
+fn fingerprint_u32(fingerprint: Fingerprint) -> u32 { u32::from_be_bytes(fingerprint.to_bytes()) }
 
 #[cfg(test)]
 mod tests {
@@ -593,7 +561,6 @@ mod tests {
         secp256k1::PublicKey,
         NetworkKind,
     };
-
     use super::*;
 
     const XPUB_1: &str = "xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW";
@@ -617,10 +584,7 @@ mod tests {
     fn identity_and_checksum_match_core_and_liana() {
         let policy = fixture();
         policy.validate().unwrap();
-        assert_eq!(
-            policy.policy_id,
-            "506b3dd1ce28b757cde12e2977c483b0afb518de9ad8edbdfbc01e5d9763dd9f"
-        );
+        assert_eq!(policy.policy_id, "506b3dd1ce28b757cde12e2977c483b0afb518de9ad8edbdfbc01e5d9763dd9f");
         assert_eq!(policy.descriptor_checksum().unwrap(), "y7qrgwup");
     }
 
@@ -663,14 +627,10 @@ mod tests {
             "branch": 2,
             "index": 7
         });
-        assert!(
-            AddressVerificationRequest::from_json(&serde_json::to_vec(&request).unwrap()).is_err()
-        );
+        assert!(AddressVerificationRequest::from_json(&serde_json::to_vec(&request).unwrap()).is_err());
         request["branch"] = 0.into();
         request["index"] = (1u64 << 31).into();
-        assert!(
-            AddressVerificationRequest::from_json(&serde_json::to_vec(&request).unwrap()).is_err()
-        );
+        assert!(AddressVerificationRequest::from_json(&serde_json::to_vec(&request).unwrap()).is_err());
     }
 
     #[test]
@@ -685,8 +645,8 @@ mod tests {
             )
             .unwrap(),
             chain_code: ChainCode::from([
-                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 24, 25, 26, 27, 28, 29, 30, 31,
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+                26, 27, 28, 29, 30, 31,
             ]),
         };
         let encoded = encode_crypto_account(
@@ -712,9 +672,7 @@ mod tests {
     #[test]
     fn unknown_json_fields_and_taproot_are_rejected() {
         let mut json = serde_json::to_value(fixture()).unwrap();
-        json.as_object_mut()
-            .unwrap()
-            .insert("extra".into(), true.into());
+        json.as_object_mut().unwrap().insert("extra".into(), true.into());
         assert!(PolicyRegistration::from_json(&serde_json::to_vec(&json).unwrap()).is_err());
 
         let mut taproot = fixture();

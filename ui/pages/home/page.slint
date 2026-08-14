@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { ButtonSection, ContentSection, HeadingLg, AppHeader,
-         TextLg, TextMd, TextSm, BasePage, ShieldPage, PageBody, JumboIcon, IconButton,
+         TextLg, TextMd, TextSm, BasePage, ShieldPage, PageBody, IconButton,
          OverlayMenu, PopupMenuItem } from "@ui/widgets.slint";
-import { Importance, Palette, Size, UISize, IconSize } from "@ui/theme.slint";
+import { Importance, Palette, Size, UISize } from "@ui/theme.slint";
 import { Callbacks, PolicyRow } from "../../callbacks.slint";
 import { HomePageProps } from "./props.slint";
 import { Navigate } from "../../gen/navigate.slint";
@@ -61,14 +61,11 @@ export component HomePagePage inherits Rectangle {
         ContentSection {
             HorizontalLayout {
                 alignment: center;
-                JumboIcon {
-                    name: "jumbo-circle";
-                    Image {
-                        source: @image-url("../../../resources/liana-mark.svg");
-                        width: IconSize.px96;
-                        height: IconSize.px96;
-                        image-fit: contain;
-                    }
+                Image {
+                    source: @image-url("../../../resources/liana-mark.svg");
+                    width: 104px;
+                    height: 125px;
+                    image-fit: contain;
                 }
             }
             HeadingLg {
@@ -161,9 +158,8 @@ export component HomePagePage inherits Rectangle {
         }
     }
 
-    // Empty-state ⋯ (overlaid top-right so it doesn't shift the hero); only
-    // shown when there is an archive to reach.
-    if Callbacks.policy-count == 0 && Callbacks.archived-count > 0: IconButton {
+    // Empty-state menu is overlaid so it does not shift the setup content.
+    if Callbacks.policy-count == 0: IconButton {
         // Inset from the top-right corner so it isn't jammed against the card's
         // rounded edge. Absolutely positioned (overlay), so this moves only the
         // icon and never shifts the hero/CTAs.
@@ -179,12 +175,23 @@ export component HomePagePage inherits Rectangle {
     if is-menu-open: OverlayMenu {
         touched-off => { is-menu-open = false; }
 
+        PopupMenuItem {
+            label: TR2.lookup(TrId.HomeWalletKey);
+            icon: Callbacks.passphrase-active ? "shield-x" : "shield-plus";
+            first: true;
+            last: Callbacks.policy-count == 0 && Callbacks.archived-count == 0;
+            clicked => {
+                is-menu-open = false;
+                Callbacks.passphrase-error = "";
+                Navigate.passphrase-page({ });
+            }
+        }
+
         // Setup actions only when there are active policies (the empty state
         // already surfaces Import / Export Xpub as its primary CTAs).
         if Callbacks.policy-count > 0: PopupMenuItem {
             label: TR2.lookup(TrId.HomeImportPolicy);
             icon: "import";
-            first: true;
             clicked => {
                 is-menu-open = false;
                 Callbacks.import-policy();
@@ -204,7 +211,6 @@ export component HomePagePage inherits Rectangle {
         if Callbacks.archived-count > 0: PopupMenuItem {
             label: TR2.format(TrId.HomeArchivedPoliciesCount, [Callbacks.archived-count]);
             icon: "archive";
-            first: Callbacks.policy-count == 0;
             last: true;
             clicked => {
                 is-menu-open = false;

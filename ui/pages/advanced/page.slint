@@ -39,8 +39,34 @@ export component AdvancedPagePage inherits Rectangle {
                         primary: false;
                         clicked => { Navigate.rename-page({ }); }
                     }
+                    LianaButton {
+                        label: TR2.lookup(TrId.AdvancedNameSigners);
+                        primary: false;
+                        clicked => { Navigate.signers-page({ }); }
+                    }
 
-                    // -- Raw descriptor (miniscript) -----------------------------
+                    // -- Portable policy backup ----------------------------------
+                    TextSm { text: TR2.lookup(TrId.AdvancedBackupTitle); color: Palette.content-tertiary; }
+                    TextSm {
+                        text: TR2.lookup(TrId.AdvancedBackupBody);
+                        color: Palette.content-secondary;
+                        wrap: word-wrap;
+                    }
+                    LianaButton {
+                        label: TR2.lookup(TrId.AdvancedBackupQr);
+                        primary: false;
+                        clicked => { Navigate.descriptor-qr-page({ }); }
+                    }
+                    LianaButton {
+                        label: TR2.lookup(TrId.AdvancedBackupFile);
+                        primary: false;
+                        clicked => {
+                            Callbacks.export-policy(Callbacks.detail-id);
+                            if Callbacks.export-ok { Navigate.export-done-page({ }); }
+                        }
+                    }
+
+                    // -- Raw descriptor (technical detail) -----------------------
                     TextSm { text: TR2.lookup(TrId.AdvancedDescriptorTitle); color: Palette.content-tertiary; }
                     TextSm {
                         text: TR2.lookup(TrId.AdvancedDescriptorBody);
@@ -57,19 +83,6 @@ export component AdvancedPagePage inherits Rectangle {
                                 wrap: word-wrap;
                             }
                         }
-                    }
-                    LianaButton {
-                        label: TR2.lookup(TrId.AdvancedExportToFile);
-                        primary: false;
-                        clicked => {
-                            Callbacks.export-descriptor(Callbacks.detail-id);
-                            if Callbacks.export-ok { Navigate.export-done-page({ }); }
-                        }
-                    }
-                    LianaButton {
-                        label: TR2.lookup(TrId.AdvancedShowQr);
-                        primary: false;
-                        clicked => { Navigate.descriptor-qr-page({ }); }
                     }
                     if Callbacks.export-error != "": TextSm {
                         text: Callbacks.export-error;

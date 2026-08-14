@@ -26,7 +26,7 @@ pub mod transport;
 use serde::{Deserialize, Serialize};
 
 pub type Result<T> = std::result::Result<T, Error>;
-pub const POLICY_SCHEMA_VERSION: u32 = 2;
+pub const POLICY_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
@@ -47,15 +47,9 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Parse(s) | Error::Unsupported(s) | Error::Sign(s) | Error::Match(s) => {
-                f.write_str(s)
-            }
-            Error::NotRegistered => {
-                f.write_str("Transaction does not match a registered wallet policy.")
-            }
-            Error::NoPassportKey => {
-                f.write_str("This Passport has no key on the selected spending path.")
-            }
+            Error::Parse(s) | Error::Unsupported(s) | Error::Sign(s) | Error::Match(s) => f.write_str(s),
+            Error::NotRegistered => f.write_str("Transaction does not match a registered wallet policy."),
+            Error::NoPassportKey => f.write_str("This Passport has no key on the selected spending path."),
         }
     }
 }
@@ -92,12 +86,12 @@ pub struct RegisteredPolicy {
     pub archived: bool,
 }
 
-fn default_policy_schema_version() -> u32 {
-    POLICY_SCHEMA_VERSION
-}
+fn default_policy_schema_version() -> u32 { POLICY_SCHEMA_VERSION }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PolicySigner {
+    #[serde(default)]
+    pub name: String,
     pub fingerprint: String,
     pub derivation_path: String,
     pub xpub: String,
@@ -121,7 +115,5 @@ pub struct SpendPath {
 
 impl SpendPath {
     /// Approximate the relative timelock in months (~4380 blocks/month).
-    pub fn approx_months(&self) -> Option<u32> {
-        self.relative_timelock_blocks.map(|b| b / 4380)
-    }
+    pub fn approx_months(&self) -> Option<u32> { self.relative_timelock_blocks.map(|b| b / 4380) }
 }

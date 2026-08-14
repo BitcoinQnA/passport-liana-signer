@@ -18,10 +18,7 @@ use super::{Error, RegisteredPolicy, Result, SpendPathKind};
 pub enum SignDecision {
     /// Safe to sign. Carries the active path; Recovery requires explicit
     /// user confirmation in the UI before `sign_and_finalize` is called.
-    Allow {
-        path: SpendPathKind,
-        requires_confirmation: bool,
-    },
+    Allow { path: SpendPathKind, requires_confirmation: bool },
     /// Do not sign. Carries a user-facing reason.
     Refuse(String),
 }
@@ -29,9 +26,7 @@ pub enum SignDecision {
 /// Decide whether signing is permitted, given a match result.
 pub fn decide(m: &MatchResult, _policy: &RegisteredPolicy) -> SignDecision {
     if !m.matched {
-        return SignDecision::Refuse(
-            "This transaction does not match the registered wallet policy.".into(),
-        );
+        return SignDecision::Refuse("This transaction does not match the registered wallet policy.".into());
     }
     let Some(path) = m.active_path else {
         return SignDecision::Refuse(refusal_reason(m, "Unable to determine the signing path."));
@@ -42,10 +37,7 @@ pub fn decide(m: &MatchResult, _policy: &RegisteredPolicy) -> SignDecision {
             "This Passport has no key on the selected spending path.",
         ));
     }
-    SignDecision::Allow {
-        path,
-        requires_confirmation: matches!(path, SpendPathKind::Recovery),
-    }
+    SignDecision::Allow { path, requires_confirmation: matches!(path, SpendPathKind::Recovery) }
 }
 
 fn refusal_reason(m: &MatchResult, fallback: &str) -> String {
@@ -74,9 +66,7 @@ pub fn sign(
 /// True if, after our signature, the PSBT can be finalized on its own (i.e.
 /// Passport is the only signer the active path needs). Used as a UI hint;
 /// never required for the coordinator workflow.
-pub fn is_finalizable(psbt: &Psbt, secp: &Secp256k1<All>) -> bool {
-    psbt.clone().finalize(secp).is_ok()
-}
+pub fn is_finalizable(psbt: &Psbt, secp: &Secp256k1<All>) -> bool { psbt.clone().finalize(secp).is_ok() }
 
 /// Sign every input we can with the device master key, then finalize.
 /// Returns the finalized PSBT (ready for Liana to broadcast).
@@ -87,8 +77,7 @@ pub fn sign_and_finalize(
     expected_signatures: usize,
 ) -> Result<Psbt> {
     sign_with_master(&mut psbt, master, secp, expected_signatures)?;
-    psbt.finalize_mut(secp)
-        .map_err(|errs| Error::Sign(format!("finalize failed: {errs:?}")))?;
+    psbt.finalize_mut(secp).map_err(|errs| Error::Sign(format!("finalize failed: {errs:?}")))?;
     Ok(psbt)
 }
 
@@ -99,9 +88,7 @@ fn sign_with_master(
     expected_signatures: usize,
 ) -> Result<usize> {
     if expected_signatures == 0 {
-        return Err(Error::Sign(
-            "no device signatures were expected for this PSBT".into(),
-        ));
+        return Err(Error::Sign("no device signatures were expected for this PSBT".into()));
     }
     let reported_keys = match psbt.sign(master, secp) {
         Ok(keys) => keys.len(),
@@ -127,13 +114,11 @@ fn count_device_partial_sigs(psbt: &Psbt, device_fp: super::bitcoin::bip32::Fing
                 .partial_sigs
                 .keys()
                 .filter(|pk| {
-                    input
-                        .bip32_derivation
-                        .get(&pk.inner)
-                        .map(|(fp, _)| *fp == device_fp)
-                        .unwrap_or(false)
+                    input.bip32_derivation.get(&pk.inner).map(|(fp, _)| *fp == device_fp).unwrap_or(false)
                 })
                 .count()
         })
         .sum()
 }
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: GPL-3.0-or-later

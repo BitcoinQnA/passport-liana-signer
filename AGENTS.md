@@ -66,3 +66,5 @@ To exercise signing against Liana desktop on the same machine, build the hosted 
 - Read `src/liana/{signing,psbt,policy}.rs` and summarize the security model before changing anything.
 - Add a UI string: add it to `i18n/en.json` and reference it via `TR2.lookup`.
 - Add a page: create `ui/pages/<name>/{props.slint,page.slint}` and let `build.rs` regenerate the route.
+<!-- SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->

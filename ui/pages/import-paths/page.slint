@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { ButtonSection, AppHeader, TextLg, TextMd, TextSm, BasePage,
-         ScrollBody, IconButton, Icon } from "@ui/widgets.slint";
+         ScrollBody, IconButton, Icon, TitledInput } from "@ui/widgets.slint";
 import { Importance, Palette, Size } from "@ui/theme.slint";
 import { Callbacks } from "../../callbacks.slint";
 import { ImportPathsPageProps } from "./props.slint";
@@ -84,13 +84,24 @@ export component ImportPathsPagePage inherits Rectangle {
                             spacing: Size.sz0_5;
                             horizontal-stretch: 1;
                             TextMd {
-                                text: s.owned ? TR2.lookup(TrId.ImportPathsThisPassport) : TR2.lookup(TrId.ImportPathsExternalKey);
+                                text: s.name;
                                 color: s.owned ? Liana.green : Palette.content-primary;
                                 bold: true;
                             }
                             TextSm {
                                 text: TR2.format(TrId.ImportPathsKeyFingerprint, [s.fingerprint]);
                                 color: Palette.content-tertiary;
+                            }
+                        }
+                    }
+                    for s in Callbacks.detail-signers: VerticalLayout {
+                        if !s.owned: TitledInput {
+                            title: TR2.format(TrId.ImportPathsNameSigner, [s.fingerprint]);
+                            text: s.name;
+                            caps-mode: sentences;
+                            character-limit: 20;
+                            accepted(value) => {
+                                Callbacks.set-pending-signer-name(s.id, value);
                             }
                         }
                     }

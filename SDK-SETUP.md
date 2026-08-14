@@ -79,3 +79,5 @@ cargo xtask run --hosted
 ```
 
 Build the Liana wallet with the simulator's exported account. The signer correctly refuses policies whose complete xpub does not match its app seed.
+<!-- SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->

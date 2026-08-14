@@ -17,6 +17,8 @@ export struct PathRow {
 }
 
 export struct SignerRow {
+    id: string,
+    name: string,
     fingerprint: string,
     owned: bool,
     detail: string,
@@ -29,6 +31,11 @@ export struct OutputRow {
 }
 
 export global Callbacks {
+    // -- Active wallet key -------------------------------------------------
+    in-out property <bool> passphrase-active: false;
+    in-out property <string> wallet-fingerprint: "";
+    in-out property <string> passphrase-error: "";
+
     // -- Home: registered policies -----------------------------------------
     in-out property <[PolicyRow]> policies: [];        // active (non-archived)
     in-out property <int> policy-count: 0;
@@ -61,6 +68,7 @@ export global Callbacks {
     in-out property <bool> signing: false;              // sign in progress (spinner)
     in-out property <bool> review-signed: false;        // signing succeeded
     in-out property <bool> review-saved: false;         // signed PSBT written to a file
+    in-out property <bool> review-qr-available: false;
     in-out property <string> review-signed-detail: "";  // where it was saved / next step
 
     // -- Xpub export --------------------------------------------------------
@@ -82,6 +90,7 @@ export global Callbacks {
     in-out property <string> verify-title: "";
     in-out property <string> verify-addr: "";
     in-out property <string> verify-detail: "";
+    in-out property <string> verify-checksum: "";
     in-out property <bool> verify-has-response: false;
 
     // -- Status banner ------------------------------------------------------
@@ -102,16 +111,23 @@ export global Callbacks {
 
     // -- UI -> Rust ---------------------------------------------------------
     callback import-policy();      // parse a descriptor + stage it for review
+    callback apply-passphrase(string);
+    callback clear-passphrase();
     callback confirm-import();     // commit the staged policy
     callback cancel-import();      // discard the staged policy
+    callback set-pending-signer-name(string /* signer id */, string /* local label */);
     callback select-policy(string /* checksum id */);
     callback sign-psbt(string /* checksum id */);
     callback verify-address(string /* checksum id */);
+    callback confirm-address();
     callback archive-policy(string /* checksum id */);
     callback restore-policy(string /* checksum id */);
     callback delete-policy(string /* checksum id */);
     callback rename-policy(string /* checksum id */, string /* new name */);
+    callback rename-signer(string /* checksum id */, string /* signer id */, string /* local label */);
     callback export-descriptor(string /* checksum id */);
+    callback export-policy(string /* checksum id */);
+    pure callback policy-qr-parts(string /* checksum id */, int /* density */) -> [string];
     callback export-xpub();
     callback set-xpub-network(string /* bitcoin | signet */);
     callback set-xpub-account(string /* BIP48 account index */);

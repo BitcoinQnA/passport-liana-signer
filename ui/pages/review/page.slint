@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { ButtonSection, AppHeader, TextLg, TextMd, TextSm, BasePage,
-         ScrollBody, IconButton, TimerCircularProgress, JumboIcon, Icon,
-         DynamicQrCode } from "@ui/widgets.slint";
+         ScrollBody, IconButton, TimerCircularProgress, JumboIcon, Icon } from "@ui/widgets.slint";
 import { Importance, Palette, Size, IconSize } from "@ui/theme.slint";
 import { Callbacks } from "../../callbacks.slint";
 import { ReviewPageProps } from "./props.slint";
@@ -24,6 +23,9 @@ export component ReviewPagePage inherits Rectangle {
         triggered => {
             sign-timer.running = false;
             Callbacks.approve();
+            if Callbacks.review-signed {
+                Navigate.signed-psbt-page({ });
+            }
         }
     }
 
@@ -71,26 +73,6 @@ export component ReviewPagePage inherits Rectangle {
                             horizontal-alignment: center;
                             wrap: word-wrap;
                         }
-                    }
-
-                    // Success banner once the device has signed. Saving the file
-                    // then routes to the full-screen success.
-                    if Callbacks.review-signed: LianaCard {
-                        width: 448px;
-                        VerticalLayout {
-                            padding: Size.sz4;
-                            spacing: Size.sz1;
-                            TextLg { text: TR2.lookup(TrId.ReviewSignedTitle); color: Liana.green; bold: true; }
-                            TextSm {
-                                text: TR2.lookup(TrId.ReviewSignedBody);
-                                color: Liana.on-surface-dim;
-                                wrap: word-wrap;
-                            }
-                        }
-                    }
-
-                    if Callbacks.review-signed: DynamicQrCode {
-                        get-parts(density) => { Callbacks.signed-psbt-qr-parts(density); }
                     }
 
                     // Which registered wallet this PSBT belongs to.
@@ -207,27 +189,6 @@ export component ReviewPagePage inherits Rectangle {
                 padding-left: Size.sz6;
                 padding-right: Size.sz6;
                 padding-bottom: Size.sz6;
-                // After signing, the whole point is to save the file, so Save is
-                // the primary action; on success route to the full-screen success.
-                if Callbacks.review-signed: LianaButton {
-                    label: TR2.lookup(TrId.ReviewSaveToFile);
-                    primary: false;
-                    clicked => {
-                        Callbacks.export-signed();
-                        if Callbacks.export-ok { Navigate.export-done-page({ }); }
-                    }
-                }
-                if Callbacks.review-signed && Callbacks.review-signed-detail != "": TextSm {
-                    text: Callbacks.review-signed-detail;
-                    color: Liana.recovery;
-                    horizontal-alignment: center;
-                    wrap: word-wrap;
-                }
-                if Callbacks.review-signed: LianaButton {
-                    label: TR2.lookup(TrId.CommonButtonDone);
-                    primary: false;
-                    clicked => { Navigate.home-page({ }); }
-                }
                 // While signing: a Liana-green spinner (sign runs on the next tick).
                 if Callbacks.signing && !Callbacks.review-signed: HorizontalLayout {
                     alignment: center;

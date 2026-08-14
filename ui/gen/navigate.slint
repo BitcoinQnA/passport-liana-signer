@@ -66,6 +66,9 @@ export global Navigate {
     // /import-review
     callback import-review-page(NavigateOptions);
     
+    // /passphrase
+    callback passphrase-page(NavigateOptions);
+
     // /policy
     callback policy-page(NavigateOptions);
     
@@ -75,12 +78,24 @@ export global Navigate {
     // /review
     callback review-page(NavigateOptions);
     
+    // /signed-psbt
+    callback signed-psbt-page(NavigateOptions);
+
+    // /signers
+    callback signers-page(NavigateOptions);
+
     // /verify
     callback verify-page(NavigateOptions);
     
+    // /verify-response
+    callback verify-response-page(NavigateOptions);
+
     // /xpub
     callback xpub-page(NavigateOptions);
     
+    // /xpub-finish
+    callback xpub-finish-page(NavigateOptions);
+
     // /xpub-save
     callback xpub-save-page(NavigateOptions);
 }
@@ -95,11 +110,15 @@ export global RoutePath {
     out property <string> import-done-page : "/import-done";
     out property <string> import-paths-page : "/import-paths";
     out property <string> import-review-page : "/import-review";
+    out property <string> passphrase-page : "/passphrase";
     out property <string> policy-page : "/policy";
     out property <string> rename-page : "/rename";
     out property <string> review-page : "/review";
+    out property <string> signed-psbt-page : "/signed-psbt";
+    out property <string> signers-page : "/signers";
     out property <string> verify-page : "/verify";
+    out property <string> verify-response-page : "/verify-response";
     out property <string> xpub-page : "/xpub";
+    out property <string> xpub-finish-page : "/xpub-finish";
     out property <string> xpub-save-page : "/xpub-save";
 }
-

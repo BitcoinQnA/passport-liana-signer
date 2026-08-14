@@ -149,3 +149,5 @@ a0r0lmfx
 
 - Liana restore documentation includes a Signet P2WSH inheritance descriptor with `wsh(or_d(pk(.../<0;1>/*),and_v(v:pkh(.../<0;1>/*),older(n))))`: https://wizardsardine.com/liana/support/howtorestore/
 - Bitcoin Core's descriptor documentation covers descriptor checksums, `wsh`, `multi`, `thresh`, and multipath descriptor syntax: https://github.com/bitcoin/bitcoin/blob/master/doc/descriptors.md
+<!-- SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz> -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->

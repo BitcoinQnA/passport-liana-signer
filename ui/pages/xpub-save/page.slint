@@ -1,18 +1,98 @@
 // SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { ButtonSection, AppHeader, TextLg, TextMd, TextSm, BasePage,
-         ScrollBody, IconButton, DynamicQrCode } from "@ui/widgets.slint";
+import { ButtonSection, ContentSection, AppHeader, TextMd, TextSm, BasePage,
+         PageBody, IconButton, AnimatedQrCode, OverlayMenu, PopupMenuItem } from "@ui/widgets.slint";
 import { Importance, Palette, Size } from "@ui/theme.slint";
 import { Callbacks } from "../../callbacks.slint";
 import { XpubSavePageProps } from "./props.slint";
 import { Navigate } from "../../gen/navigate.slint";
 import { TR2, TrId } from "../../gen/tr.slint";
 import { Liana } from "../../liana-theme.slint";
-import { LianaCard, LianaButton } from "../../liana-widgets.slint";
+import { LianaButton } from "../../liana-widgets.slint";
+
+enum QrDensity {
+    Low,
+    Medium,
+    High,
+}
+
+component DensityChoice inherits Rectangle {
+    in property <QrDensity> value;
+    in property <QrDensity> selected;
+    callback clicked();
+
+    width: 32px;
+    height: 24px;
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 9px;
+        height: 9px;
+        background: root.selected == root.value ? Palette.content-brand : Palette.content-tertiary;
+    }
+
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+component AccountQrCode inherits Rectangle {
+    pure callback get-parts(int) -> [string];
+
+    private property <QrDensity> density: QrDensity.Medium;
+    private property <[string]> parts: get-parts(density-int(density));
+
+    width: 100%;
+    height: 390px;
+
+    pure function density-int(value: QrDensity) -> int {
+        value == QrDensity.Low ? 250 : value == QrDensity.Medium ? 500 : 1000;
+    }
+
+    function select-density(value: QrDensity) {
+        density = value;
+        parts = get-parts(density-int(value));
+    }
+
+    swipe := SwipeGestureHandler {
+        width: 100%;
+        height: 100%;
+        handle-swipe-left: true;
+        handle-swipe-right: true;
+
+        swiped => {
+            if (self.current-position.x - self.pressed-position.x < -50px) {
+                root.select-density(root.density == QrDensity.Low ? QrDensity.Medium : QrDensity.High);
+            } else if (self.current-position.x - self.pressed-position.x > 50px) {
+                root.select-density(root.density == QrDensity.High ? QrDensity.Medium : QrDensity.Low);
+            }
+        }
+
+        VerticalLayout {
+            alignment: start;
+            spacing: Size.sz4;
+
+            HorizontalLayout {
+                alignment: center;
+                AnimatedQrCode { parts: root.parts; }
+            }
+
+            HorizontalLayout {
+                alignment: center;
+                spacing: Size.sz1;
+                for value in [QrDensity.Low, QrDensity.Medium, QrDensity.High]: DensityChoice {
+                    value: value;
+                    selected: root.density;
+                    clicked => { root.select-density(value); }
+                }
+            }
+        }
+    }
+}
 
 export component XpubSavePagePage inherits Rectangle {
     in property <XpubSavePageProps> props;
+    property <bool> is-menu-open: false;
 
     BasePage {
         VerticalLayout {
@@ -25,54 +105,55 @@ export component XpubSavePagePage inherits Rectangle {
                     importance: Importance.normal;
                     clicked => { Navigate.backward(); }
                 }
-                Rectangle { }
+                IconButton {
+                    icon: "ellipsis";
+                    size: Size.sz8;
+                    importance: Importance.normal;
+                    clicked => { is-menu-open = !is-menu-open; }
+                }
             }
 
-            ScrollBody {
-                p-x: Size.sz4;
-                VerticalLayout {
-                    spacing: Size.sz4;
-
+            PageBody {
+                ContentSection {
+                    spacing: Size.sz3;
                     TextMd {
                         text: TR2.lookup(TrId.XpubSaveBody);
                         color: Palette.content-secondary;
+                        horizontal-alignment: center;
                         wrap: word-wrap;
                     }
-
-                    DynamicQrCode {
+                    AccountQrCode {
                         get-parts(density) => { Callbacks.xpub-qr-parts(density); }
                     }
-
-                    TextSm { text: TR2.lookup(TrId.XpubSaveKeyLabel); color: Palette.content-tertiary; }
-                    TextLg { text: Callbacks.xpub-fingerprint; color: Liana.green; bold: true; }
-                    LianaCard {
-                        width: 448px;
-                        VerticalLayout {
-                            padding: Size.sz4;
-                            TextSm { text: Callbacks.xpub-value; color: Liana.on-surface; wrap: word-wrap; }
-                        }
-                    }
-
                     if Callbacks.export-error != "": TextSm {
                         text: Callbacks.export-error;
                         color: Liana.recovery;
+                        horizontal-alignment: center;
                         wrap: word-wrap;
                     }
                 }
-            }
-
-            ButtonSection {
-                padding-left: Size.sz6;
-                padding-right: Size.sz6;
-                padding-bottom: Size.sz6;
-                LianaButton {
-                    label: TR2.lookup(TrId.XpubSaveSaveKeyToFile);
-                    primary: false;
-                    clicked => {
-                        Callbacks.export-key-file();
-                        if Callbacks.export-ok { Navigate.export-done-page({ }); }
+                ButtonSection {
+                    LianaButton {
+                        label: TR2.lookup(TrId.CommonButtonContinue);
+                        primary: true;
+                        clicked => { Navigate.xpub-finish-page({ }); }
                     }
                 }
+            }
+        }
+    }
+
+    if is-menu-open: OverlayMenu {
+        touched-off => { is-menu-open = false; }
+
+        PopupMenuItem {
+            label: TR2.lookup(TrId.XpubSaveSaveKeyToFile);
+            icon: "save";
+            first: true;
+            last: true;
+            clicked => {
+                is-menu-open = false;
+                Callbacks.export-key-file();
             }
         }
     }

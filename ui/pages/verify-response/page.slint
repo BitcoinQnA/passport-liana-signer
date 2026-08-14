@@ -1,22 +1,23 @@
 // SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { AppHeader, TextSm, TextMd, BasePage, PageBody, IconButton } from "@ui/widgets.slint";
+import { ButtonSection, ContentSection, AppHeader, TextMd, BasePage,
+         PageBody, IconButton } from "@ui/widgets.slint";
 import { Importance, Palette, Size } from "@ui/theme.slint";
 import { Callbacks } from "../../callbacks.slint";
-import { DescriptorQrPageProps } from "./props.slint";
+import { VerifyResponsePageProps } from "./props.slint";
 import { Navigate } from "../../gen/navigate.slint";
 import { TR2, TrId } from "../../gen/tr.slint";
-import { Liana } from "../../liana-theme.slint";
+import { LianaButton } from "../../liana-widgets.slint";
 import { LianaDynamicQrCode } from "../../liana-dynamic-qr.slint";
 
-export component DescriptorQrPagePage inherits Rectangle {
-    in property <DescriptorQrPageProps> props;
+export component VerifyResponsePagePage inherits Rectangle {
+    in property <VerifyResponsePageProps> props;
 
     BasePage {
         VerticalLayout {
             AppHeader {
-                title: TR2.lookup(TrId.DescriptorQrTitle);
+                title: TR2.lookup(TrId.VerifyResponseTitle);
                 side-padding: Size.sz6;
                 IconButton {
                     icon: "chevron-left";
@@ -29,26 +30,25 @@ export component DescriptorQrPagePage inherits Rectangle {
 
             PageBody {
                 p-x: Size.sz4;
-                VerticalLayout {
-                    spacing: Size.sz4;
-
+                ContentSection {
+                    spacing: Size.sz3;
                     TextMd {
-                        text: TR2.lookup(TrId.DescriptorQrBody);
+                        text: TR2.lookup(TrId.VerifyResponseBody);
                         color: Palette.content-secondary;
                         horizontal-alignment: center;
                         wrap: word-wrap;
                     }
-
                     LianaDynamicQrCode {
                         get-parts(density) => {
-                            Callbacks.policy-qr-parts(Callbacks.detail-id, density);
+                            Callbacks.address-response-qr-parts(density);
                         }
                     }
-
-                    TextSm {
-                        text: Callbacks.detail-checksum;
-                        color: Liana.green;
-                        horizontal-alignment: center;
+                }
+                ButtonSection {
+                    LianaButton {
+                        label: TR2.lookup(TrId.CommonButtonDone);
+                        primary: true;
+                        clicked => { Navigate.home-page({ }); }
                     }
                 }
             }

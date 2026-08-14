@@ -10,7 +10,7 @@ en = "Liana"
 
 [permissions]
 template = ["gui-app", "fs-generic"]
-"os/security" = ["GetAppSeed"]
+"os/security" = ["GetSeed"]
 # Per-location access grants. fs-generic grants the file *operations*; these grant
 # the locations. The export file-picker can save the key/descriptor/signed-PSBT to
 # Airlock, internal (User), or SD/USB, and imports are read from any of them — so
