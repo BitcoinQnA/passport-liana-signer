@@ -1,0 +1,64 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import { ButtonSection, ContentSection, AppHeader, TextMd, BasePage, PageBody,
+         IconButton, TitledInput } from "@ui/widgets.slint";
+import { Importance, Palette, Size } from "@ui/theme.slint";
+import { Callbacks } from "../../callbacks.slint";
+import { ImportNamePageProps } from "./props.slint";
+import { Navigate } from "../../gen/navigate.slint";
+import { TR2, TrId } from "../../gen/tr.slint";
+import { LianaButton } from "../../liana-widgets.slint";
+
+export component ImportNamePagePage inherits Rectangle {
+    in property <ImportNamePageProps> props;
+
+    BasePage {
+        VerticalLayout {
+            AppHeader {
+                title: TR2.lookup(TrId.ImportNameTitle);
+                side-padding: Size.sz6;
+                IconButton {
+                    icon: "chevron-left";
+                    size: Size.sz8;
+                    importance: Importance.normal;
+                    clicked => { Navigate.backward(); }
+                }
+                Rectangle { }
+            }
+
+            PageBody {
+                p-x: Size.sz4;
+                p-y: Size.sz4;
+                ContentSection {
+                    spacing: Size.sz4;
+                    TextMd {
+                        text: TR2.lookup(TrId.ImportNameBody);
+                        color: Palette.content-secondary;
+                        wrap: word-wrap;
+                    }
+                    TitledInput {
+                        title: TR2.lookup(TrId.ImportReviewWalletName);
+                        placeholder: TR2.lookup(TrId.ImportReviewWalletNamePlaceholder);
+                        caps-mode: sentences;
+                        character-limit: 20;
+                        text <=> Callbacks.import-name;
+                    }
+                }
+
+                ButtonSection {
+                    LianaButton {
+                        label: TR2.lookup(TrId.CommonButtonContinue);
+                        primary: true;
+                        enabled: Callbacks.import-name != "";
+                        clicked => {
+                            Callbacks.import-error = "";
+                            Callbacks.import-path-index = 0;
+                            Navigate.import-paths-page({ });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

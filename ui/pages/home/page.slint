@@ -4,7 +4,7 @@
 import { ButtonSection, ContentSection, HeadingLg, AppHeader,
          TextLg, TextMd, TextSm, BasePage, ShieldPage, PageBody, IconButton,
          OverlayMenu, PopupMenuItem } from "@ui/widgets.slint";
-import { Importance, Palette, Size, UISize } from "@ui/theme.slint";
+import { Importance, Palette, Size } from "@ui/theme.slint";
 import { Callbacks, PolicyRow } from "../../callbacks.slint";
 import { HomePageProps } from "./props.slint";
 import { Navigate } from "../../gen/navigate.slint";
@@ -22,6 +22,7 @@ component PolicyCard inherits Rectangle {
         height: parent.height;
 
         VerticalLayout {
+            horizontal-stretch: 1;
             padding-left: Size.sz5;
             padding-right: Size.sz5;
             alignment: center;
@@ -53,7 +54,7 @@ component PolicyCard inherits Rectangle {
 export component HomePagePage inherits Rectangle {
     in property <HomePageProps> props;
 
-    // Setup + archive actions live behind the ⋯ menu (shared by both states).
+    // Secondary setup actions live behind the menu once a policy exists.
     property <bool> is-menu-open: false;
 
     // ---- Empty state ----------------------------------------------------
@@ -158,40 +159,16 @@ export component HomePagePage inherits Rectangle {
         }
     }
 
-    // Empty-state menu is overlaid so it does not shift the setup content.
-    if Callbacks.policy-count == 0: IconButton {
-        // Inset from the top-right corner so it isn't jammed against the card's
-        // rounded edge. Absolutely positioned (overlay), so this moves only the
-        // icon and never shifts the hero/CTAs.
-        x: root.width - self.width - Size.sz8;
-        y: UISize.control-center-status-bar-height + Size.sz5;
-        icon: "ellipsis";
-        size: Size.sz8;
-        importance: Importance.normal;
-        clicked => { is-menu-open = !is-menu-open; }
-    }
-
-    // ---- Shared ⋯ pop-out menu (overlays everything) --------------------
+    // ---- Secondary setup menu -------------------------------------------
     if is-menu-open: OverlayMenu {
         touched-off => { is-menu-open = false; }
-
-        PopupMenuItem {
-            label: TR2.lookup(TrId.HomeWalletKey);
-            icon: Callbacks.passphrase-active ? "shield-x" : "shield-plus";
-            first: true;
-            last: Callbacks.policy-count == 0 && Callbacks.archived-count == 0;
-            clicked => {
-                is-menu-open = false;
-                Callbacks.passphrase-error = "";
-                Navigate.passphrase-page({ });
-            }
-        }
 
         // Setup actions only when there are active policies (the empty state
         // already surfaces Import / Export Xpub as its primary CTAs).
         if Callbacks.policy-count > 0: PopupMenuItem {
             label: TR2.lookup(TrId.HomeImportPolicy);
             icon: "import";
+            first: true;
             clicked => {
                 is-menu-open = false;
                 Callbacks.import-policy();
@@ -201,20 +178,11 @@ export component HomePagePage inherits Rectangle {
         if Callbacks.policy-count > 0: PopupMenuItem {
             label: TR2.lookup(TrId.HomeConnectToLiana);
             icon: "export";
-            last: Callbacks.archived-count == 0;
+            last: true;
             clicked => {
                 is-menu-open = false;
                 Callbacks.export-xpub();
                 Navigate.xpub-page({ });
-            }
-        }
-        if Callbacks.archived-count > 0: PopupMenuItem {
-            label: TR2.format(TrId.HomeArchivedPoliciesCount, [Callbacks.archived-count]);
-            icon: "archive";
-            last: true;
-            clicked => {
-                is-menu-open = false;
-                Navigate.archive-page({ });
             }
         }
     }

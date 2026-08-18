@@ -1,17 +1,167 @@
 // SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { AppHeader, TextLg, TextMd, TextSm, BasePage, ScrollBody, IconButton, Icon } from "@ui/widgets.slint";
-import { Importance, Palette, Size } from "@ui/theme.slint";
+import { AppHeader, TextLg, TextMd, TextSm, BasePage, IconButton, Icon,
+         OverlayMenu, PopupMenuItem } from "@ui/widgets.slint";
+import { Importance, Palette, Size, IconSize } from "@ui/theme.slint";
 import { Callbacks, PathRow, SignerRow } from "../../callbacks.slint";
 import { PolicyPageProps } from "./props.slint";
 import { Navigate } from "../../gen/navigate.slint";
 import { TR2, TrId } from "../../gen/tr.slint";
 import { Liana } from "../../liana-theme.slint";
 import { LianaCard } from "../../liana-widgets.slint";
+import { LianaPagination } from "../../liana-pagination.slint";
+
+component PolicyOverview inherits VerticalLayout {
+    in property <string> policy-name;
+    in property <string> network;
+    in property <string> checksum;
+    in property <int> path-count;
+    in property <int> signer-count;
+
+    width: 448px;
+    spacing: Size.sz4;
+    alignment: start;
+
+    TextSm {
+        text: TR2.lookup(TrId.PolicyOverview);
+        color: Palette.content-tertiary;
+        horizontal-alignment: center;
+    }
+    TextLg {
+        text: root.policy-name;
+        color: Palette.content-primary;
+        bold: true;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+    HorizontalLayout {
+        alignment: center;
+        spacing: Size.sz2;
+        TextSm { text: root.network; color: Liana.green; }
+        TextSm { text: root.checksum; color: Palette.content-tertiary; }
+    }
+    Rectangle { height: 1px; background: Palette.border-tertiary; }
+    HorizontalLayout {
+        TextMd {
+            text: TR2.lookup(TrId.PolicySpendIntro);
+            color: Palette.content-secondary;
+            horizontal-stretch: 1;
+        }
+        TextLg { text: root.path-count; color: Liana.green; bold: true; }
+    }
+    HorizontalLayout {
+        TextMd {
+            text: TR2.lookup(TrId.PolicyKeysTitle);
+            color: Palette.content-secondary;
+            horizontal-stretch: 1;
+        }
+        TextLg { text: root.signer-count; color: Liana.green; bold: true; }
+    }
+}
+
+component SpendingPathPage inherits VerticalLayout {
+    in property <PathRow> path;
+    in property <int> page-index;
+    in property <int> total;
+
+    width: 448px;
+    spacing: Size.sz4;
+    alignment: start;
+
+    TextSm {
+        text: TR2.format(TrId.ImportPathsProgress, [root.page-index + 1, root.total]);
+        color: Palette.content-tertiary;
+        horizontal-alignment: center;
+    }
+    LianaCard {
+        width: 448px;
+        height: 300px;
+        recovery: root.path.is-recovery;
+        VerticalLayout {
+            width: 444px;
+            padding: Size.sz6;
+            spacing: Size.sz3;
+            alignment: center;
+            Icon {
+                name: root.path.is-recovery ? "hourglass" : "check-circle";
+                size: IconSize.px64;
+                color: root.path.is-recovery ? Liana.recovery : Liana.green;
+            }
+            TextSm {
+                text: root.path.kind-label;
+                color: root.path.is-recovery ? Liana.recovery : Liana.green;
+                bold: true;
+                horizontal-alignment: center;
+            }
+            TextLg {
+                text: root.path.headline;
+                color: Liana.on-surface;
+                bold: true;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            TextSm {
+                text: root.path.detail;
+                color: Liana.on-surface-dim;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+component SignerPage inherits VerticalLayout {
+    in property <SignerRow> signer;
+    in property <int> page-index;
+    in property <int> total;
+
+    width: 448px;
+    spacing: Size.sz4;
+    alignment: start;
+
+    TextSm {
+        text: TR2.format(TrId.ImportSignersProgress, [root.page-index + 1, root.total]);
+        color: Palette.content-tertiary;
+        horizontal-alignment: center;
+    }
+    LianaCard {
+        width: 448px;
+        height: 260px;
+        VerticalLayout {
+            width: 444px;
+            padding: Size.sz6;
+            spacing: Size.sz3;
+            alignment: center;
+            Icon {
+                name: "key";
+                size: IconSize.px64;
+                color: root.signer.owned ? Liana.green : Liana.on-surface-dim;
+            }
+            TextSm {
+                text: root.signer.detail;
+                color: root.signer.owned ? Liana.green : Liana.on-surface-dim;
+                horizontal-alignment: center;
+            }
+            TextLg {
+                text: root.signer.name;
+                color: Liana.on-surface;
+                bold: true;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            TextSm {
+                text: TR2.format(TrId.ImportPathsKeyFingerprint, [root.signer.fingerprint]);
+                color: Liana.on-surface-dim;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
 
 export component PolicyPagePage inherits Rectangle {
     in property <PolicyPageProps> props;
+    property <bool> is-menu-open: false;
 
     BasePage {
         VerticalLayout {
@@ -24,81 +174,83 @@ export component PolicyPagePage inherits Rectangle {
                     importance: Importance.normal;
                     clicked => { Navigate.backward(); }
                 }
-                // Tucked-away access to advanced/destructive actions.
                 IconButton {
                     icon: "ellipsis";
                     size: Size.sz8;
                     importance: Importance.normal;
-                    clicked => { Navigate.advanced-page({ }); }
+                    clicked => { is-menu-open = !is-menu-open; }
                 }
             }
 
-            ScrollBody {
-                p-x: Size.sz4;
-                VerticalLayout {
-                    spacing: Size.sz3;
+            Rectangle {
+                vertical-stretch: 1;
+                LianaPagination {
+                    x: Size.sz4;
+                    y: Size.sz4;
+                    width: 448px;
+                    height: parent.height - 2 * Size.sz4;
+                    total-pages: 1 + Callbacks.detail-paths.length + Callbacks.detail-signers.length;
+                    page-spacing: Size.sz4;
+                    dots-padding-bottom: Size.sz3;
 
-                    // Wallet identity
-                    TextLg { text: Callbacks.detail-name; color: Palette.content-primary; bold: true; wrap: word-wrap; }
-                    HorizontalLayout {
-                        spacing: Size.sz2;
-                        TextSm { text: Callbacks.detail-network; color: Liana.green; }
-                        TextSm { text: Callbacks.detail-checksum; color: Palette.content-tertiary; }
+                    PolicyOverview {
+                        policy-name: Callbacks.detail-name;
+                        network: Callbacks.detail-network;
+                        checksum: Callbacks.detail-checksum;
+                        path-count: Callbacks.detail-paths.length;
+                        signer-count: Callbacks.detail-signers.length;
                     }
-
-                    // Spend paths — icon-led, matching the import review.
-                    TextSm { text: TR2.lookup(TrId.PolicySpendIntro); color: Palette.content-tertiary; }
-                    for p in Callbacks.detail-paths: LianaCard {
-                        width: 448px;
-                        recovery: p.is-recovery;
-                        HorizontalLayout {
-                            padding: Size.sz4;
-                            spacing: Size.sz3;
-                            VerticalLayout {
-                                alignment: start;
-                                Icon {
-                                    name: p.is-recovery ? "hourglass" : "check-circle";
-                                    size: 36px;
-                                    color: p.is-recovery ? Liana.recovery : Liana.green;
-                                }
-                            }
-                            VerticalLayout {
-                                spacing: Size.sz1;
-                                horizontal-stretch: 1;
-                                TextSm {
-                                    text: p.kind-label;
-                                    color: p.is-recovery ? Liana.recovery : Liana.green;
-                                    bold: true;
-                                }
-                                TextLg { text: p.headline; color: Liana.on-surface; bold: true; wrap: word-wrap; }
-                                TextSm { text: p.detail; color: Liana.on-surface-dim; wrap: word-wrap; }
-                            }
-                        }
+                    for path[index] in Callbacks.detail-paths: SpendingPathPage {
+                        path: path;
+                        page-index: index;
+                        total: Callbacks.detail-paths.length;
                     }
-
-                    // Keys — key icon, green when this Passport holds it.
-                    TextSm { text: TR2.lookup(TrId.PolicyKeysTitle); color: Palette.content-tertiary; }
-                    for s in Callbacks.detail-signers: HorizontalLayout {
-                        spacing: Size.sz3;
-                        alignment: start;
-                        VerticalLayout {
-                            alignment: center;
-                            Icon { name: "key"; size: 28px; color: s.owned ? Liana.green : Palette.content-tertiary; }
-                        }
-                        VerticalLayout {
-                            spacing: Size.sz0_5;
-                            horizontal-stretch: 1;
-                            TextMd {
-                                text: s.name;
-                                color: s.owned ? Liana.green : Palette.content-primary;
-                                bold: true;
-                            }
-                            TextSm { text: TR2.format(TrId.ImportPathsKeyFingerprint, [s.fingerprint]); color: Palette.content-tertiary; }
-                        }
+                    for signer[index] in Callbacks.detail-signers: SignerPage {
+                        signer: signer;
+                        page-index: index;
+                        total: Callbacks.detail-signers.length;
                     }
-
-                    Rectangle { height: Size.sz4; }
                 }
+            }
+        }
+    }
+
+    if is-menu-open: OverlayMenu {
+        touched-off => { is-menu-open = false; }
+        PopupMenuItem {
+            label: TR2.lookup(TrId.AdvancedRenameWallet);
+            icon: "edit";
+            first: true;
+            clicked => {
+                is-menu-open = false;
+                Navigate.rename-page({ });
+            }
+        }
+        PopupMenuItem {
+            label: TR2.lookup(TrId.AdvancedNameSigners);
+            icon: "keys";
+            clicked => {
+                is-menu-open = false;
+                Navigate.signers-page({ });
+            }
+        }
+        PopupMenuItem {
+            label: TR2.lookup(TrId.AdvancedBackupTitle);
+            icon: "export";
+            clicked => {
+                is-menu-open = false;
+                Callbacks.export-error = "";
+                Navigate.export-policy-page({ });
+            }
+        }
+        PopupMenuItem {
+            label: TR2.lookup(TrId.AdvancedDeletePermanently);
+            icon: "delete";
+            text_color: Palette.content-negative;
+            last: true;
+            clicked => {
+                is-menu-open = false;
+                Navigate.delete-confirm-page({ });
             }
         }
     }

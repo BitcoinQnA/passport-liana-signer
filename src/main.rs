@@ -66,6 +66,7 @@ const MAX_PSBT_BYTES: u64 = 8 * 1_048_576;
 const MAX_DESCRIPTOR_BYTES: u64 = transport::MAX_DESCRIPTOR_BYTES as u64;
 const MAX_POLICY_STORAGE_BYTES: u64 = 32 * 1024;
 const HIGH_FEE_WARNING_PERCENT: u64 = 25;
+const ADDRESS_SEARCH_LIMIT: u32 = 50;
 
 // Optional host-bridge paths used only by explicit simulator test features.
 const IMPORT_DESCRIPTOR_FILE: &str = "import.txt"; // host-bridge descriptor (sim test)
@@ -79,7 +80,7 @@ const EXPORT_DIR: &str = "liana"; // subdir used when the user picks a location 
 /// Live app state shared across UI callbacks.
 struct AppState {
     secp: Secp256k1<All>,
-    seed: master_key::WalletSeed,
+    seed: master_key::AppWalletSeed,
     fp: Fingerprint,
     data_dir: PathBuf,
     policies: store::PolicyStore,
@@ -103,13 +104,18 @@ struct Pending {
     policy: RegisteredPolicy,
 }
 
+enum AddressScan {
+    Request(Vec<u8>),
+    Address(String),
+}
+
 fn app_main(_cx: AppContext, ui: AppWindow) {
     log_server::init_wait(env!("CARGO_CRATE_NAME")).unwrap();
     log::set_max_level(log::LevelFilter::Info);
     log::info!("Starting Liana Signer");
 
     let secp = Secp256k1::new();
-    let seed = match master_key::wallet_seed("") {
+    let seed = match master_key::app_wallet_seed() {
         Ok(seed) => seed,
         Err(_) => {
             show_startup_error(&ui, tr::lookup_id(TrId::ErrorSeedUnavailable));
@@ -145,46 +151,7 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
     }));
 
     refresh_home(&ui, &state);
-    ui.global::<Callbacks>().set_wallet_fingerprint(fp.to_string().into());
     set_status(&ui, tr::lookup_id(TrId::StatusReady));
-
-    // -- select the active BIP39 wallet key ---------------------------------
-    {
-        let state = state.clone();
-        let weak = ui.as_weak();
-        ui.global::<Callbacks>().on_apply_passphrase(move |passphrase| {
-            let Some(ui) = weak.upgrade() else { return };
-            let result = switch_wallet_key(&state, passphrase.as_str());
-            match result {
-                Ok(fingerprint) => {
-                    let cb = ui.global::<Callbacks>();
-                    cb.set_passphrase_error("".into());
-                    cb.set_passphrase_active(!passphrase.is_empty());
-                    cb.set_wallet_fingerprint(fingerprint.to_string().into());
-                    refresh_home(&ui, &state);
-                }
-                Err(error) => ui.global::<Callbacks>().set_passphrase_error(error.to_string().into()),
-            }
-        });
-    }
-
-    {
-        let state = state.clone();
-        let weak = ui.as_weak();
-        ui.global::<Callbacks>().on_clear_passphrase(move || {
-            let Some(ui) = weak.upgrade() else { return };
-            match switch_wallet_key(&state, "") {
-                Ok(fingerprint) => {
-                    let cb = ui.global::<Callbacks>();
-                    cb.set_passphrase_error("".into());
-                    cb.set_passphrase_active(false);
-                    cb.set_wallet_fingerprint(fingerprint.to_string().into());
-                    refresh_home(&ui, &state);
-                }
-                Err(error) => ui.global::<Callbacks>().set_passphrase_error(error.to_string().into()),
-            }
-        });
-    }
 
     // -- select policy -> populate detail -----------------------------------
     {
@@ -384,24 +351,62 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 let st = state.lock().unwrap();
                 sim_bridge_file(&st.data_dir, VERIFY_ADDRESS_FILE)
             };
-            let request_bytes = if let Some(bridge) = bridge {
+            let scan = if let Some(bridge) = bridge {
                 read_bytes_path_limited(&bridge, transport::MAX_JSON_BYTES as u64, "address request")
+                    .map(AddressScan::Request)
             } else {
-                scan_address_request()
+                scan_address_verification()
             };
-            let request_bytes = match request_bytes {
-                Ok(bytes) => bytes,
+            let scan = match scan {
+                Ok(scan) => scan,
                 Err(error) => {
-                    if !error.to_string().contains("cancelled") {
-                        set_status(&ui, &trfmt(TrId::VerifyRequestInvalid, &[&error.to_string()]));
+                    if error.to_string().contains("cancelled") {
+                        return;
                     }
+                    show_verify_error(&ui, &trfmt(TrId::VerifyRequestInvalid, &[&error.to_string()]));
                     return;
                 }
             };
+            if let AddressScan::Address(address) = scan {
+                let result = {
+                    let st = state.lock().unwrap();
+                    find_registered_address(
+                        st.policies.all(),
+                        &expected_checksum,
+                        &address,
+                        st.seed.as_bytes(),
+                        &st.secp,
+                        st.fp,
+                    )
+                };
+                match result {
+                    Ok((policy, branch, index, address)) => {
+                        let cb = ui.global::<Callbacks>();
+                        cb.set_verify_ready(true);
+                        cb.set_verify_matched(true);
+                        cb.set_verify_response_required(false);
+                        cb.set_verify_addr(address.into());
+                        cb.set_verify_checksum(policy.descriptor_checksum.clone().into());
+                        cb.set_verify_title(tr::lookup_id(TrId::VerifySuccessTitle).into());
+                        let kind = if branch == 1 {
+                            tr::lookup_id(TrId::VerifyChangeKind)
+                        } else {
+                            tr::lookup_id(TrId::VerifyReceiveKind)
+                        };
+                        cb.set_verify_detail(
+                            trfmt(TrId::VerifySuccessDetail, &[&policy.name, kind, &index.to_string()])
+                                .into(),
+                        );
+                    }
+                    Err(error) => show_verify_error(&ui, &error.to_string()),
+                }
+                return;
+            }
+            let AddressScan::Request(request_bytes) = scan else { return };
             let request = match transport::AddressVerificationRequest::from_json(&request_bytes) {
                 Ok(request) => request,
                 Err(error) => {
-                    set_status(&ui, &trfmt(TrId::VerifyRequestInvalid, &[&error.to_string()]));
+                    show_verify_error(&ui, &trfmt(TrId::VerifyRequestInvalid, &[&error.to_string()]));
                     return;
                 }
             };
@@ -445,6 +450,7 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 Ok((name, address)) => {
                     cb.set_verify_addr(address.into());
                     cb.set_verify_matched(true);
+                    cb.set_verify_response_required(true);
                     cb.set_verify_has_response(false);
                     cb.set_verify_checksum(request.descriptor_checksum.clone().into());
                     cb.set_verify_title(tr::lookup_id(TrId::VerifySuccessTitle).into());
@@ -681,6 +687,8 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 let cb = ui.global::<Callbacks>();
                 cb.set_import_error("".into());
                 cb.set_import_committed(false);
+                cb.set_import_path_index(0);
+                cb.set_import_signer_index(0);
             }
             let text = if let Some(bridge) = bridge {
                 match read_text_path_limited(&bridge, MAX_DESCRIPTOR_BYTES, "descriptor") {
@@ -734,6 +742,8 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     populate_detail(&ui, &reg);
                     // Pre-fill an editable default name for the review screen.
                     cb.set_import_name(reg.name.clone().into());
+                    cb.set_import_path_index(0);
+                    cb.set_import_signer_index(0);
                     cb.set_import_error("".into());
                     cb.set_import_parsed(true);
                 }
@@ -786,6 +796,8 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     cb.set_import_parsed(false);
                     cb.set_import_error("".into());
                     cb.set_import_committed(true);
+                    cb.set_import_path_index(0);
+                    cb.set_import_signer_index(0);
                     refresh_home(&ui, &state);
                     set_status(&ui, tr::lookup_id(TrId::StatusPolicyAdded));
                 }
@@ -807,6 +819,8 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
             let cb = ui.global::<Callbacks>();
             cb.set_import_parsed(false);
             cb.set_import_committed(false);
+            cb.set_import_path_index(0);
+            cb.set_import_signer_index(0);
         });
     }
 
@@ -841,30 +855,6 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
         });
     }
 
-    // -- archive / restore policy (reversible) ------------------------------
-    {
-        let state = state.clone();
-        let weak = ui.as_weak();
-        ui.global::<Callbacks>().on_archive_policy(move |id| {
-            let Some(ui) = weak.upgrade() else { return };
-            let result = {
-                let mut st = state.lock().unwrap();
-                let dir = st.data_dir.clone();
-                if let Some(updated) = st.policies.set_archived(id.as_str(), true) {
-                    save_policy(&dir, &updated)
-                } else {
-                    Err(anyhow::anyhow!(tr::lookup_id(TrId::ErrorPolicyNotFound)))
-                }
-            };
-            match result {
-                Ok(()) => {
-                    refresh_home(&ui, &state);
-                    set_status(&ui, &trfmt(TrId::StatusArchivedPolicy, &[id.as_str()]));
-                }
-                Err(e) => set_status(&ui, &format!("{e}")),
-            }
-        });
-    }
     // -- rename policy ------------------------------------------------------
     {
         let state = state.clone();
@@ -926,31 +916,7 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
             }
         });
     }
-    {
-        let state = state.clone();
-        let weak = ui.as_weak();
-        ui.global::<Callbacks>().on_restore_policy(move |id| {
-            let Some(ui) = weak.upgrade() else { return };
-            let result = {
-                let mut st = state.lock().unwrap();
-                let dir = st.data_dir.clone();
-                if let Some(updated) = st.policies.set_archived(id.as_str(), false) {
-                    save_policy(&dir, &updated)
-                } else {
-                    Err(anyhow::anyhow!(tr::lookup_id(TrId::ErrorPolicyNotFound)))
-                }
-            };
-            match result {
-                Ok(()) => {
-                    refresh_home(&ui, &state);
-                    set_status(&ui, &trfmt(TrId::StatusRestoredPolicy, &[id.as_str()]));
-                }
-                Err(e) => set_status(&ui, &format!("{e}")),
-            }
-        });
-    }
-
-    // -- delete policy (permanent, from the archive): store + disk ----------
+    // -- delete policy: store + disk ----------------------------------------
     {
         let state = state.clone();
         let weak = ui.as_weak();
@@ -1115,31 +1081,10 @@ fn policy_row(p: &RegisteredPolicy) -> PolicyRow {
 
 fn refresh_home(ui: &AppWindow, state: &Arc<Mutex<AppState>>) {
     let st = state.lock().unwrap();
-    // Active policies drive the home list; archived ones live in the archive.
-    let active: Vec<PolicyRow> = st.policies.all().iter().filter(|p| !p.archived).map(policy_row).collect();
-    let archived: Vec<PolicyRow> = st.policies.all().iter().filter(|p| p.archived).map(policy_row).collect();
+    let policies: Vec<PolicyRow> = st.policies.all().iter().map(policy_row).collect();
     let cb = ui.global::<Callbacks>();
-    cb.set_policy_count(active.len() as i32);
-    cb.set_archived_count(archived.len() as i32);
-    cb.set_policies(ModelRc::new(VecModel::from(active)));
-    cb.set_archived_policies(ModelRc::new(VecModel::from(archived)));
-}
-
-fn switch_wallet_key(state: &Arc<Mutex<AppState>>, passphrase: &str) -> anyhow::Result<Fingerprint> {
-    let seed = master_key::wallet_seed(passphrase).context("unable to derive wallet key")?;
-    let mut st = state.lock().unwrap();
-    let master = master_for_network(seed.as_bytes(), DEFAULT_NETWORK)?;
-    let fingerprint = master.fingerprint(&st.secp);
-    let policies = load_policies(&st.data_dir, seed.as_bytes(), &st.secp, fingerprint);
-
-    st.seed = seed;
-    st.fp = fingerprint;
-    st.policies = policies;
-    st.pending = None;
-    st.pending_import = None;
-    st.last_signed = None;
-    st.last_address_response = None;
-    Ok(fingerprint)
+    cb.set_policy_count(policies.len() as i32);
+    cb.set_policies(ModelRc::new(VecModel::from(policies)));
 }
 
 fn populate_detail(ui: &AppWindow, reg: &RegisteredPolicy) {
@@ -1153,7 +1098,6 @@ fn populate_detail(ui: &AppWindow, reg: &RegisteredPolicy) {
         network_from_policy(reg).map(network_display).unwrap_or(reg.network.as_str()).into(),
     );
     cb.set_detail_descriptor(reg.descriptor.clone().into());
-    cb.set_detail_archived(reg.archived);
 
     // Number recovery tiers when there is more than one (a decaying policy), so
     // "Recovery path 1 / 2 / 3" disambiguate the cards; a lone recovery stays
@@ -1366,6 +1310,16 @@ fn clear_verify(ui: &AppWindow) {
     cb.set_verify_addr("".into());
     cb.set_verify_detail("".into());
     cb.set_verify_checksum("".into());
+    cb.set_verify_response_required(false);
+}
+
+fn show_verify_error(ui: &AppWindow, error: &str) {
+    let cb = ui.global::<Callbacks>();
+    cb.set_verify_ready(true);
+    cb.set_verify_matched(false);
+    cb.set_verify_response_required(false);
+    cb.set_verify_title(tr::lookup_id(TrId::VerifyNotRegisteredTitle).into());
+    cb.set_verify_detail(trfmt(TrId::VerifyNotRegisteredDetail, &[error]).into());
 }
 
 fn set_status(ui: &AppWindow, msg: &str) { ui.global::<Callbacks>().set_status(msg.to_string().into()); }
@@ -1810,7 +1764,10 @@ fn load_policies_impl(
         if let Ok(text) = read_text_path_limited(&path, MAX_POLICY_STORAGE_BYTES, "policy") {
             if let Ok(reg) = store::from_json(&text) {
                 match validate_loaded_policy(reg, seed, secp, fingerprint) {
-                    Ok(reg) => {
+                    Ok(mut reg) => {
+                        // Archive was removed from the product flow. Revive
+                        // records created by older builds so they remain usable.
+                        reg.archived = false;
                         let _ = s.add(reg);
                     }
                     Err(error) => {
@@ -1846,7 +1803,10 @@ fn load_policies_impl(
         };
         if let Ok(reg) = store::from_json(&text) {
             match validate_loaded_policy(reg, seed, secp, fingerprint) {
-                Ok(reg) => {
+                Ok(mut reg) => {
+                    // Archive was removed from the product flow. Revive
+                    // records created by older builds so they remain usable.
+                    reg.archived = false;
                     let _ = s.add(reg);
                 }
                 Err(error) => log::warn!("ignored invalid wallet policy {}: {error}", entry.name),
@@ -2061,7 +2021,6 @@ fn write_bridge_path(_path: &Path, _bytes: &[u8]) {}
 fn show_startup_error(ui: &AppWindow, msg: &str) {
     let cb = ui.global::<Callbacks>();
     cb.set_policy_count(0);
-    cb.set_archived_count(0);
     cb.set_import_error(msg.into());
 }
 
@@ -2120,7 +2079,7 @@ fn scan_psbt_or_file() -> anyhow::Result<Psbt> {
     }
 }
 
-fn scan_address_request() -> anyhow::Result<Vec<u8>> {
+fn scan_address_verification() -> anyhow::Result<AddressScan> {
     let options = ScanQrOptions {
         header_title: tr::lookup_id(TrId::QrScanAddressTitle).into(),
         header_right_icon: "close".into(),
@@ -2129,10 +2088,10 @@ fn scan_address_request() -> anyhow::Result<Vec<u8>> {
     match open_qr_scanner::<GuiPermissions>(options)
         .map_err(|e| anyhow::anyhow!("QR scanner error: {e:?}"))?
     {
-        Some(ScanQrResult::Ur2 { ur_type, data, .. }) => decode_ur_bytes(&ur_type, &data, "bytes"),
-        Some(ScanQrResult::Qr { .. }) => {
-            anyhow::bail!("Address request QR must use ur:bytes.")
+        Some(ScanQrResult::Ur2 { ur_type, data, .. }) => {
+            decode_ur_bytes(&ur_type, &data, "bytes").map(AddressScan::Request)
         }
+        Some(ScanQrResult::Qr { data, .. }) => decode_bitcoin_address_qr(&data).map(AddressScan::Address),
         Some(ScanQrResult::ButtonClicked) => {
             anyhow::bail!("Address verification requires a QR request.")
         }
@@ -2140,6 +2099,23 @@ fn scan_address_request() -> anyhow::Result<Vec<u8>> {
             anyhow::bail!("cancelled")
         }
     }
+}
+
+fn decode_bitcoin_address_qr(data: &[u8]) -> anyhow::Result<String> {
+    let text = std::str::from_utf8(data).context("Address QR is not UTF-8")?.trim();
+    let value = text
+        .strip_prefix("bitcoin:")
+        .or_else(|| text.strip_prefix("BITCOIN:"))
+        .unwrap_or(text)
+        .split('?')
+        .next()
+        .unwrap_or_default();
+    if value.is_empty() {
+        anyhow::bail!("Address QR is empty.");
+    }
+    Address::from_str(value)
+        .map_err(|_| anyhow::anyhow!("Scan Liana's verification QR or a Bitcoin address QR."))?;
+    Ok(value.to_owned())
 }
 
 fn decode_ur_bytes(ur_type: &str, cbor: &[u8], expected_type: &str) -> anyhow::Result<Vec<u8>> {
@@ -2260,6 +2236,71 @@ fn derive_policy_address(
         .address(network)
         .map(|address| address.to_string())
         .map_err(|e| anyhow::anyhow!("derive address: {e}"))
+}
+
+fn find_registered_address(
+    policies: &[RegisteredPolicy],
+    expected_checksum: &str,
+    scanned_address: &str,
+    seed: &[u8],
+    secp: &Secp256k1<All>,
+    passport_fp: Fingerprint,
+) -> anyhow::Result<(RegisteredPolicy, u32, u32, String)> {
+    let mut matched = None;
+    let mut saw_policy = false;
+    let mut saw_matching_network = false;
+    for policy in policies.iter().filter(|policy| {
+        (expected_checksum.is_empty() || policy.descriptor_checksum == expected_checksum)
+            && policy_is_signable(policy)
+    }) {
+        saw_policy = true;
+        let network = network_from_policy(policy).context("wallet policy network is unsupported")?;
+        let checked = match Address::from_str(scanned_address)
+            .map_err(|_| anyhow::anyhow!("The scanned code is not a Bitcoin address."))?
+            .require_network(network)
+        {
+            Ok(address) => {
+                saw_matching_network = true;
+                address.to_string()
+            }
+            Err(_) if expected_checksum.is_empty() => continue,
+            Err(_) => anyhow::bail!("The address is for a different Bitcoin network."),
+        };
+        verify_registered_key(policy, seed, secp, passport_fp)?;
+        let parsed = descriptor::import(&policy.descriptor).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let branches =
+            parsed.descriptor.into_single_descriptors().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        for branch in 0..=1u32 {
+            let descriptor = branches
+                .get(branch as usize)
+                .context("wallet policy does not contain both receive and change branches")?;
+            for index in 0..ADDRESS_SEARCH_LIMIT {
+                let derived = descriptor
+                    .at_derivation_index(index)
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                    .address(network)
+                    .map_err(|e| anyhow::anyhow!("derive address: {e}"))?
+                    .to_string();
+                if derived == checked {
+                    if matched.is_some() {
+                        anyhow::bail!("The address matches more than one registered wallet policy.");
+                    }
+                    matched = Some((policy.clone(), branch, index, checked.clone()));
+                }
+            }
+        }
+    }
+    if !saw_policy {
+        anyhow::bail!("Wallet policy is not registered.");
+    }
+    if !saw_matching_network {
+        anyhow::bail!("The address is for a different Bitcoin network.");
+    }
+    matched.with_context(|| {
+        format!(
+            "Address not found in the first {ADDRESS_SEARCH_LIMIT} receive or change addresses for this wallet policy"
+        )
+    })
 }
 
 /// Format an integer with thousands separators (52596 -> "52,596").
@@ -2896,6 +2937,7 @@ mod tests {
         if let Some(external) = reg.signers.iter_mut().find(|signer| !signer.owned_by_passport) {
             external.name = "Family Recovery".into();
         }
+        reg.archived = true; // Legacy records are reactivated now that archive is removed.
 
         let dir = std::env::temp_dir().join("liana-signer-test-store");
         let _ = std::fs::remove_dir_all(&dir);
@@ -2908,6 +2950,7 @@ mod tests {
         let store = load_policies(&dir, &[0x11; 32], &secp, fp);
         assert_eq!(store.len(), 1);
         let loaded = store.find_by_checksum(&reg.descriptor_checksum).unwrap();
+        assert!(!loaded.archived);
         assert!(loaded.signers.iter().any(|signer| signer.name == "Family Recovery"));
 
         let mut legacy: serde_json::Value = serde_json::from_str(&saved).unwrap();
@@ -3039,5 +3082,44 @@ mod tests {
         assert!(receive.starts_with("tb1"));
         assert!(derive_policy_address(&reg.descriptor, 2, 7, Network::Signet).is_err());
         assert!(derive_policy_address(&reg.descriptor, 0, 1 << 31, Network::Signet).is_err());
+    }
+
+    #[test]
+    fn plain_address_qr_matches_registered_policy() {
+        let (secp, xpub, fp) = device();
+        let reg = seed_sample(&secp, &xpub, fp).unwrap();
+        let address = derive_policy_address(&reg.descriptor, 1, 12, Network::Signet).unwrap();
+        let bip21 = format!("bitcoin:{address}?label=Liana");
+        let scanned = decode_bitcoin_address_qr(bip21.as_bytes()).unwrap();
+        let (matched, branch, index, normalized) = find_registered_address(
+            &[reg.clone()],
+            &reg.descriptor_checksum,
+            &scanned,
+            &[0x11; 32],
+            &secp,
+            fp,
+        )
+        .unwrap();
+        assert_eq!(matched.descriptor_checksum, reg.descriptor_checksum);
+        assert_eq!((branch, index), (1, 12));
+        assert_eq!(normalized, address);
+    }
+
+    #[test]
+    fn plain_address_qr_rejects_non_address_data() {
+        let error = decode_bitcoin_address_qr(b"not an address").unwrap_err().to_string();
+        assert!(error.contains("Bitcoin address QR"), "got: {error}");
+    }
+
+    #[test]
+    fn plain_address_search_skips_other_networks() {
+        let (secp, xpub, fp) = device();
+        let signet = seed_sample(&secp, &xpub, fp).unwrap();
+        let mut mainnet = signet.clone();
+        mainnet.network = "bitcoin".into();
+        let address = derive_policy_address(&signet.descriptor, 0, 3, Network::Signet).unwrap();
+        let (_, branch, index, _) =
+            find_registered_address(&[mainnet, signet], "", &address, &[0x11; 32], &secp, fp).unwrap();
+        assert_eq!((branch, index), (0, 3));
     }
 }

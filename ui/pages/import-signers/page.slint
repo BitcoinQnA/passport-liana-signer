@@ -1,0 +1,112 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import { ButtonSection, ContentSection, AppHeader, HeadingLg, TextMd, TextSm,
+         BasePage, PageBody, IconButton, Icon, TitledInput } from "@ui/widgets.slint";
+import { Importance, Palette, Size } from "@ui/theme.slint";
+import { Callbacks, SignerRow } from "../../callbacks.slint";
+import { ImportSignersPageProps } from "./props.slint";
+import { Navigate } from "../../gen/navigate.slint";
+import { TR2, TrId } from "../../gen/tr.slint";
+import { Liana } from "../../liana-theme.slint";
+import { LianaButton } from "../../liana-widgets.slint";
+
+export component ImportSignersPagePage inherits Rectangle {
+    in property <ImportSignersPageProps> props;
+    private property <SignerRow> current-signer: Callbacks.detail-signers[Callbacks.import-signer-index];
+
+    BasePage {
+        VerticalLayout {
+            AppHeader {
+                title: TR2.lookup(TrId.ImportSignersTitle);
+                side-padding: Size.sz6;
+                IconButton {
+                    icon: "chevron-left";
+                    size: Size.sz8;
+                    importance: Importance.normal;
+                    clicked => {
+                        if Callbacks.import-signer-index > 0 {
+                            Callbacks.import-signer-index -= 1;
+                            signer-name.text = Callbacks.detail-signers[Callbacks.import-signer-index].name;
+                        } else {
+                            Navigate.backward();
+                        }
+                    }
+                }
+                Rectangle { }
+            }
+
+            PageBody {
+                p-x: Size.sz4;
+                p-y: Size.sz4;
+                ContentSection {
+                    spacing: Size.sz3;
+                    TextSm {
+                        text: TR2.format(TrId.ImportSignersProgress, [Callbacks.import-signer-index + 1, Callbacks.detail-signers.length]);
+                        color: Palette.content-tertiary;
+                        horizontal-alignment: center;
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        Icon {
+                            name: "key";
+                            size: 56px;
+                            color: root.current-signer.owned ? Liana.green : Palette.content-tertiary;
+                        }
+                    }
+                    HeadingLg {
+                        text: root.current-signer.name;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    TextSm {
+                        text: TR2.format(TrId.ImportPathsKeyFingerprint, [root.current-signer.fingerprint]);
+                        color: Palette.content-tertiary;
+                        horizontal-alignment: center;
+                    }
+                    TextMd {
+                        text: root.current-signer.owned
+                            ? TR2.lookup(TrId.ImportSignersOwnedBody)
+                            : TR2.lookup(TrId.ImportSignersExternalBody);
+                        color: Palette.content-secondary;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    signer-name := TitledInput {
+                        visible: !root.current-signer.owned;
+                        title: TR2.lookup(TrId.ImportPathsExternalKey);
+                        caps-mode: sentences;
+                        character-limit: 20;
+                        text: root.current-signer.name;
+                    }
+                    if Callbacks.import-error != "": TextSm {
+                        text: Callbacks.import-error;
+                        color: Liana.recovery;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+
+                ButtonSection {
+                    LianaButton {
+                        label: TR2.lookup(TrId.CommonButtonContinue);
+                        primary: true;
+                        clicked => {
+                            if !root.current-signer.owned {
+                                Callbacks.set-pending-signer-name(root.current-signer.id, signer-name.text);
+                            }
+                            if Callbacks.import-error == "" {
+                                if Callbacks.import-signer-index + 1 < Callbacks.detail-signers.length {
+                                    Callbacks.import-signer-index += 1;
+                                    signer-name.text = Callbacks.detail-signers[Callbacks.import-signer-index].name;
+                                } else {
+                                    Navigate.import-confirm-page({ });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

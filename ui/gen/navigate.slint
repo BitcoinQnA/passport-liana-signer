@@ -9,7 +9,7 @@ export enum Animate {
 struct NavigateOptions {
     // Replace the current route in the history stack
     replace: bool,
-    
+
     // Animation to use when navigating
     animate: Animate,
 }
@@ -18,66 +18,69 @@ export global Navigate {
     // Navigation state
     in property <bool> has-backward;
     in property <bool> has-forward;
-    
+
     // Generic navigation callbacks
     callback backward();
     callback forward();
-    
+
     callback backward-animate(Animate);
     callback forward-animate(Animate);
-    
+
     callback return-home();
     callback return-home-animate(Animate);
-    
+
     // Log the current navigation state
     callback debug();
-    
+
     // Raw string navigation
     callback navigate(string, NavigateOptions);
-    
+
     //
     // Type safe navigation callbacks
     //
-    
+
     // /home
     callback home-page(NavigateOptions);
-    
-    // /advanced
-    callback advanced-page(NavigateOptions);
-    
-    // /archive
-    callback archive-page(NavigateOptions);
-    
+
     // /delete-confirm
     callback delete-confirm-page(NavigateOptions);
-    
+
     // /descriptor-qr
     callback descriptor-qr-page(NavigateOptions);
-    
+
     // /export-done
     callback export-done-page(NavigateOptions);
-    
+
+    // /export-policy
+    callback export-policy-page(NavigateOptions);
+
+    // /import-confirm
+    callback import-confirm-page(NavigateOptions);
+
     // /import-done
     callback import-done-page(NavigateOptions);
-    
+
+    // /import-name
+    callback import-name-page(NavigateOptions);
+
     // /import-paths
     callback import-paths-page(NavigateOptions);
-    
+
     // /import-review
     callback import-review-page(NavigateOptions);
-    
-    // /passphrase
-    callback passphrase-page(NavigateOptions);
+
+    // /import-signers
+    callback import-signers-page(NavigateOptions);
 
     // /policy
     callback policy-page(NavigateOptions);
-    
+
     // /rename
     callback rename-page(NavigateOptions);
-    
+
     // /review
     callback review-page(NavigateOptions);
-    
+
     // /signed-psbt
     callback signed-psbt-page(NavigateOptions);
 
@@ -86,13 +89,13 @@ export global Navigate {
 
     // /verify
     callback verify-page(NavigateOptions);
-    
+
     // /verify-response
     callback verify-response-page(NavigateOptions);
 
     // /xpub
     callback xpub-page(NavigateOptions);
-    
+
     // /xpub-finish
     callback xpub-finish-page(NavigateOptions);
 
@@ -102,15 +105,16 @@ export global Navigate {
 
 export global RoutePath {
     out property <string> home-page : "/home";
-    out property <string> advanced-page : "/advanced";
-    out property <string> archive-page : "/archive";
     out property <string> delete-confirm-page : "/delete-confirm";
     out property <string> descriptor-qr-page : "/descriptor-qr";
     out property <string> export-done-page : "/export-done";
+    out property <string> export-policy-page : "/export-policy";
+    out property <string> import-confirm-page : "/import-confirm";
     out property <string> import-done-page : "/import-done";
+    out property <string> import-name-page : "/import-name";
     out property <string> import-paths-page : "/import-paths";
     out property <string> import-review-page : "/import-review";
-    out property <string> passphrase-page : "/passphrase";
+    out property <string> import-signers-page : "/import-signers";
     out property <string> policy-page : "/policy";
     out property <string> rename-page : "/rename";
     out property <string> review-page : "/review";

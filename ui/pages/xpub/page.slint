@@ -16,13 +16,15 @@ component Step inherits HorizontalLayout {
     in property <string> number;
     in property <string> text;
     spacing: Size.sz3;
-    alignment: start;
+    alignment: center;
     Text {
         text: root.number;
+        width: Size.sz5;
         color: Liana.green;
         font-size: 18px;
         font-weight: 700;
-        vertical-alignment: top;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
     TextMd {
         text: root.text;
@@ -67,7 +69,6 @@ export component XpubPagePage inherits Rectangle {
                         wrap: word-wrap;
                     }
 
-                    TextSm { text: TR2.lookup(TrId.XpubHowItWorks); color: Palette.content-tertiary; }
                     HorizontalLayout {
                         spacing: Size.sz2;
                         TextSm {

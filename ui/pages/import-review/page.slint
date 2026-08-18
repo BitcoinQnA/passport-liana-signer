@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { ButtonSection, AppHeader, HeadingLg, TextMd, TextSm, BasePage,
-         ScrollBody, IconButton, JumboIcon, Icon, TitledInput } from "@ui/widgets.slint";
-import { Importance, Palette, Size, IconSize } from "@ui/theme.slint";
+import { ButtonSection, ContentSection, AppHeader, HeadingLg, TextMd, TextSm,
+         BasePage, PageBody, IconButton } from "@ui/widgets.slint";
+import { Importance, Palette, Size } from "@ui/theme.slint";
 import { Callbacks } from "../../callbacks.slint";
 import { ImportReviewPageProps } from "./props.slint";
 import { Navigate } from "../../gen/navigate.slint";
@@ -31,22 +31,22 @@ export component ImportReviewPagePage inherits Rectangle {
                 Rectangle { }
             }
 
-            ScrollBody {
+            PageBody {
                 p-x: Size.sz4;
-                VerticalLayout {
-                    spacing: Size.sz4;
+                p-y: Size.sz4;
+                ContentSection {
+                    spacing: Size.sz3;
 
-                    // Brand mark for a confident, less wall-of-text intro.
                     HorizontalLayout {
                         alignment: center;
-                        padding-top: Size.sz2;
-                        JumboIcon {
-                            name: "jumbo-circle";
-                            Icon { name: "liana"; size: IconSize.px96; color: Liana.green; }
+                        Image {
+                            source: @image-url("../../../resources/liana-mark.svg");
+                            width: 72px;
+                            height: 86px;
+                            image-fit: contain;
                         }
                     }
 
-                    // Wallet identity.
                     HeadingLg { text: TR2.lookup(TrId.ImportReviewNewWallet); horizontal-alignment: center; }
                     HorizontalLayout {
                         alignment: center;
@@ -55,7 +55,6 @@ export component ImportReviewPagePage inherits Rectangle {
                         TextSm { text: Callbacks.detail-checksum; color: Palette.content-tertiary; }
                     }
 
-                    // What's happening.
                     TextMd {
                         text: TR2.lookup(TrId.ImportReviewBody);
                         color: Palette.content-secondary;
@@ -63,31 +62,13 @@ export component ImportReviewPagePage inherits Rectangle {
                         wrap: word-wrap;
                     }
 
-                    // Give the wallet a name (editable; defaults to "Liana wallet").
-                    TitledInput {
-                        title: TR2.lookup(TrId.ImportReviewWalletName);
-                        placeholder: TR2.lookup(TrId.ImportReviewWalletNamePlaceholder);
-                        caps-mode: sentences;
-                        text <=> Callbacks.import-name;
-                    }
                 }
-            }
 
-            ButtonSection {
-                padding-left: Size.sz6;
-                padding-right: Size.sz6;
-                padding-bottom: Size.sz6;
-                LianaButton {
-                    label: TR2.lookup(TrId.CommonButtonContinue);
-                    primary: true;
-                    clicked => { Navigate.import-paths-page({ }); }
-                }
-                LianaButton {
-                    label: TR2.lookup(TrId.CommonButtonCancel);
-                    primary: false;
-                    clicked => {
-                        Callbacks.cancel-import();
-                        Navigate.home-page({ });
+                ButtonSection {
+                    LianaButton {
+                        label: TR2.lookup(TrId.CommonButtonContinue);
+                        primary: true;
+                        clicked => { Navigate.import-name-page({ }); }
                     }
                 }
             }

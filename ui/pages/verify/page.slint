@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { ButtonSection, ContentSection, AppHeader, TextLg, TextMd, TextSm, BasePage,
-         PageBody, IconButton, JumboIcon, Icon } from "@ui/widgets.slint";
-import { Importance, Palette, Size, IconSize } from "@ui/theme.slint";
+         PageBody, IconButton, JumboIcon, Icon, BtcAddress } from "@ui/widgets.slint";
+import { Importance, Palette, Size, IconSize, FontSize } from "@ui/theme.slint";
 import { Callbacks } from "../../callbacks.slint";
 import { VerifyPageProps } from "./props.slint";
 import { Navigate } from "../../gen/navigate.slint";
@@ -64,13 +64,29 @@ export component VerifyPagePage inherits Rectangle {
 
                     if Callbacks.verify-addr != "": LianaCard {
                         width: 448px;
-                        height: 96px;
+                        height: 128px;
                         recovery: !Callbacks.verify-matched;
                         VerticalLayout {
-                            padding: Size.sz4;
+                            width: 444px;
+                            padding-left: Size.sz1;
+                            padding-right: Size.sz1;
+                            padding-top: Size.sz3;
+                            padding-bottom: Size.sz3;
+                            spacing: Size.sz1;
                             alignment: center;
-                            TextSm { text: TR2.lookup(TrId.VerifyAddressLabel); color: Liana.on-surface-dim; }
-                            TextMd { text: Callbacks.verify-addr; color: Liana.on-surface; wrap: word-wrap; }
+                            TextSm {
+                                text: TR2.lookup(TrId.VerifyAddressLabel);
+                                color: Liana.on-surface-dim;
+                                horizontal-alignment: center;
+                            }
+                            BtcAddress {
+                                address: Callbacks.verify-addr;
+                                items-per-row: 8;
+                                font-size: FontSize.md;
+                                primary-color: Liana.on-surface;
+                                secondary-color: Liana.on-surface-dim;
+                                section-spacing: Size.sz0_5;
+                            }
                         }
                     }
 
@@ -91,12 +107,18 @@ export component VerifyPagePage inherits Rectangle {
 
                 ButtonSection {
                     if Callbacks.verify-matched: LianaButton {
-                        label: TR2.lookup(TrId.VerifyConfirm);
+                        label: Callbacks.verify-response-required
+                            ? TR2.lookup(TrId.VerifyConfirm)
+                            : TR2.lookup(TrId.CommonButtonDone);
                         primary: true;
                         clicked => {
-                            Callbacks.confirm-address();
-                            if Callbacks.verify-has-response {
-                                Navigate.verify-response-page({ });
+                            if Callbacks.verify-response-required {
+                                Callbacks.confirm-address();
+                                if Callbacks.verify-has-response {
+                                    Navigate.verify-response-page({ });
+                                }
+                            } else {
+                                Navigate.home-page({ });
                             }
                         }
                     }

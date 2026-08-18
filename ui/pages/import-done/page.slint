@@ -17,7 +17,7 @@ export component ImportDonePagePage inherits Rectangle {
     BasePage {
         VerticalLayout {
             AppHeader {
-                title: TR2.lookup(TrId.ImportDoneTitle);
+                title: TR2.lookup(TrId.ImportDoneHeader);
                 side-padding: Size.sz6;
                 Rectangle { }
                 Rectangle { }
@@ -62,7 +62,10 @@ export component ImportDonePagePage inherits Rectangle {
                     LianaButton {
                         label: TR2.lookup(TrId.ImportDoneBackupPolicy);
                         primary: false;
-                        clicked => { Navigate.descriptor-qr-page({ }); }
+                        clicked => {
+                            Callbacks.export-error = "";
+                            Navigate.export-policy-page({ });
+                        }
                     }
                     LianaButton {
                         label: TR2.lookup(TrId.CommonButtonDone);

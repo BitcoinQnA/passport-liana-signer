@@ -18,7 +18,7 @@ support-url = "https://foundation.xyz"
 
 [permissions]
 template = ["gui-app", "fs-generic"]
-"os/security" = ["GetSeed"]
+"os/security" = ["GetAppSeed"]
 "os/fs" = [
     "GetAirlockReadAccess",
     "GetAirlockWriteAccess",

@@ -1,0 +1,89 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import { Palette, Size, Timings } from "@ui/theme.slint";
+
+component PageDot inherits Rectangle {
+    in property <int> page-index;
+    in property <bool> selected;
+    callback clicked(int);
+
+    width: Size.sz3;
+    height: Size.sz3;
+    border-radius: self.height / 2;
+    background: selected ? Palette.content-brand : Palette.border-secondary;
+    animate background { duration: Timings.prop-change; }
+
+    TouchArea { clicked => { root.clicked(root.page-index); } }
+}
+
+// App-local pager. Keeping the selector outside the swipe viewport prevents
+// it from covering page headings while preserving KeyOS swipe behavior.
+export component LianaPagination inherits Rectangle {
+    in property <int> total-pages: 1;
+    in-out property <int> current-page: 0;
+    in property <length> page-spacing: Size.zero;
+    in property <length> dots-padding-top: Size.sz4;
+    in property <length> dots-padding-bottom: Size.zero;
+    private property <length> dots-height: total-pages > 1
+        ? Size.sz3 + dots-padding-top + dots-padding-bottom
+        : Size.zero;
+
+    swipe := SwipeGestureHandler {
+        width: root.width;
+        height: max(0px, root.height - root.dots-height);
+        handle-swipe-right: root.current-page > 0;
+        handle-swipe-left: root.current-page < root.total-pages - 1;
+
+        swiped => {
+            if self.current-position.x > self.pressed-position.x + self.width / 4 {
+                root.current-page = max(0, root.current-page - 1);
+            } else if self.current-position.x < self.pressed-position.x - self.width / 4 {
+                root.current-page = min(root.total-pages - 1, root.current-page + 1);
+            }
+        }
+
+        HorizontalLayout {
+            height: parent.height;
+            property <length> position: -root.current-page * (root.width + root.page-spacing);
+            property <length> swipe-offset;
+            spacing: root.page-spacing;
+            x: position + swipe-offset;
+
+            animate position {
+                duration: 200ms;
+                easing: ease-in-out;
+            }
+
+            states [
+                swiping when swipe.swiping: {
+                    swipe-offset: swipe.current-position.x - swipe.pressed-position.x;
+                    out {
+                        animate swipe-offset {
+                            duration: 200ms;
+                            easing: ease-in-out;
+                        }
+                    }
+                }
+            ]
+
+            @children
+        }
+    }
+
+    if root.total-pages > 1: HorizontalLayout {
+        y: root.height - self.height;
+        width: root.width;
+        height: root.dots-height;
+        alignment: center;
+        spacing: Size.sz3;
+        padding-top: root.dots-padding-top;
+        padding-bottom: root.dots-padding-bottom;
+
+        for page in Math.min(root.total-pages, 10): PageDot {
+            page-index: page;
+            selected: page == Math.min(root.current-page, 9);
+            clicked(index) => { root.current-page = index; }
+        }
+    }
+}

@@ -1,25 +1,51 @@
-# appId = ASCII "liana-signer-app" (exactly 16 bytes / 0x + 32 hex).
-manifestVersion = "0"
 appId = "0x6c69616e612d7369676e65722d617070"
-publisher = "Foundation Devices"
-description = "Policy-aware Liana Miniscript signer for Passport Prime"
-version = "0.2.0"
 
 [appName]
 en = "Liana"
 
 [permissions]
-template = ["gui-app", "fs-generic"]
-"os/security" = ["GetSeed"]
-# Per-location access grants. fs-generic grants the file *operations*; these grant
-# the locations. The export file-picker can save the key/descriptor/signed-PSBT to
-# Airlock, internal (User), or SD/USB, and imports are read from any of them — so
-# read+write are needed on all three (else "AccessDenied").
 "os/fs" = [
+    "AsyncCopyBlock",
+    "AsyncRead",
+    "AsyncWrite",
+    "AtomicCopy",
+    "CloseDir",
+    "CloseFile",
+    "CreateDirMessage",
+    "Flush",
     "GetAirlockReadAccess",
     "GetAirlockWriteAccess",
-    "GetUserReadAccess",
-    "GetUserWriteAccess",
+    "GetMetadata",
     "GetUsbReadAccess",
     "GetUsbWriteAccess",
+    "GetUserReadAccess",
+    "GetUserWriteAccess",
+    "MapFileMessage",
+    "NextEntry",
+    "OpenDirMessage",
+    "OpenFileMessage",
+    "ReadFile",
+    "Remove",
+    "Rename",
+    "SeekFile",
+    "SetLen",
+    "SubscribeFilesystemEvent",
+    "TruncateFile",
+    "WriteFile",
+]
+"os/gui-server" = [
+    "AnimateNextFrame",
+    "HideKeyboard",
+    "RegisterAppMessage",
+    "RequestRedraw",
+    "ShowModal",
+    "SubmitFrame",
+    "UpdateKeyboard",
+]
+"os/security" = ["GetAppSeed"]
+"os/settings" = [
+    "GetDebugTouch",
+    "GetSystemTheme",
+    "SubscribeDebugTouch",
+    "SubscribeSystemTheme",
 ]

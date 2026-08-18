@@ -31,16 +31,9 @@ export struct OutputRow {
 }
 
 export global Callbacks {
-    // -- Active wallet key -------------------------------------------------
-    in-out property <bool> passphrase-active: false;
-    in-out property <string> wallet-fingerprint: "";
-    in-out property <string> passphrase-error: "";
-
     // -- Home: registered policies -----------------------------------------
-    in-out property <[PolicyRow]> policies: [];        // active (non-archived)
+    in-out property <[PolicyRow]> policies: [];
     in-out property <int> policy-count: 0;
-    in-out property <[PolicyRow]> archived-policies: [];
-    in-out property <int> archived-count: 0;
 
     // -- Policy detail ------------------------------------------------------
     in-out property <string> detail-id: "";
@@ -48,7 +41,6 @@ export global Callbacks {
     in-out property <string> detail-checksum: "";
     in-out property <string> detail-network: "";
     in-out property <string> detail-descriptor: "";
-    in-out property <bool> detail-archived: false;
     in-out property <[PathRow]> detail-paths: [];
     in-out property <[SignerRow]> detail-signers: [];
 
@@ -91,6 +83,9 @@ export global Callbacks {
     in-out property <string> verify-detail: "";
     in-out property <string> verify-checksum: "";
     in-out property <bool> verify-has-response: false;
+    // Bound Liana requests need a response QR. Plain address checks finish on
+    // the verification result screen, matching Passport Core's policy flow.
+    in-out property <bool> verify-response-required: false;
 
     // -- Status banner ------------------------------------------------------
     in-out property <string> status: "";
@@ -105,13 +100,15 @@ export global Callbacks {
     in-out property <string> import-error: "";
     // User-chosen wallet name (edited on the review screen; applied on confirm).
     in-out property <string> import-name: "";
+    // Fixed-screen policy review pagination. Each path and signer gets its own
+    // screen so descriptor complexity never introduces vertical scrolling.
+    in-out property <int> import-path-index: 0;
+    in-out property <int> import-signer-index: 0;
     // Editable name for the selected policy (rename screen); tracks detail-name.
     in-out property <string> rename-value: "";
 
     // -- UI -> Rust ---------------------------------------------------------
     callback import-policy();      // parse a descriptor + stage it for review
-    callback apply-passphrase(string);
-    callback clear-passphrase();
     callback confirm-import();     // commit the staged policy
     callback cancel-import();      // discard the staged policy
     callback set-pending-signer-name(string /* signer id */, string /* local label */);
@@ -119,8 +116,6 @@ export global Callbacks {
     callback sign-psbt(string /* checksum id */);
     callback verify-address(string /* checksum id */);
     callback confirm-address();
-    callback archive-policy(string /* checksum id */);
-    callback restore-policy(string /* checksum id */);
     callback delete-policy(string /* checksum id */);
     callback rename-policy(string /* checksum id */, string /* new name */);
     callback rename-signer(string /* checksum id */, string /* signer id */, string /* local label */);

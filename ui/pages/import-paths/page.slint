@@ -1,18 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { ButtonSection, AppHeader, TextLg, TextMd, TextSm, BasePage,
-         ScrollBody, IconButton, Icon, TitledInput } from "@ui/widgets.slint";
+import { ButtonSection, ContentSection, AppHeader, HeadingLg, TextMd, TextSm,
+         BasePage, PageBody, IconButton, Icon } from "@ui/widgets.slint";
 import { Importance, Palette, Size } from "@ui/theme.slint";
-import { Callbacks } from "../../callbacks.slint";
+import { Callbacks, PathRow } from "../../callbacks.slint";
 import { ImportPathsPageProps } from "./props.slint";
 import { Navigate } from "../../gen/navigate.slint";
 import { TR2, TrId } from "../../gen/tr.slint";
 import { Liana } from "../../liana-theme.slint";
-import { LianaCard, LianaButton } from "../../liana-widgets.slint";
+import { LianaButton } from "../../liana-widgets.slint";
 
 export component ImportPathsPagePage inherits Rectangle {
     in property <ImportPathsPageProps> props;
+    private property <PathRow> current-path: Callbacks.detail-paths[Callbacks.import-path-index];
 
     BasePage {
         VerticalLayout {
@@ -23,114 +24,71 @@ export component ImportPathsPagePage inherits Rectangle {
                     icon: "chevron-left";
                     size: Size.sz8;
                     importance: Importance.normal;
-                    // Back to the explainer; keeps the staged import (no cancel).
-                    clicked => { Navigate.backward(); }
+                    clicked => {
+                        if Callbacks.import-path-index > 0 {
+                            Callbacks.import-path-index -= 1;
+                        } else {
+                            Navigate.backward();
+                        }
+                    }
                 }
                 Rectangle { }
             }
 
-            ScrollBody {
+            PageBody {
                 p-x: Size.sz4;
-                VerticalLayout {
-                    spacing: Size.sz3;
+                p-y: Size.sz4;
+                ContentSection {
+                    spacing: Size.sz4;
 
-                    TextSm { text: TR2.lookup(TrId.ImportPathsSpendIntro); color: Palette.content-tertiary; }
+                    TextSm {
+                        text: TR2.format(TrId.ImportPathsProgress, [Callbacks.import-path-index + 1, Callbacks.detail-paths.length]);
+                        color: Palette.content-tertiary;
+                        horizontal-alignment: center;
+                    }
 
-                    // One card per spend path, with a leading icon: a green check
-                    // for the always-available path, an hourglass for time-locked
-                    // recovery paths.
-                    for p in Callbacks.detail-paths: LianaCard {
-                        width: 448px;
-                        recovery: p.is-recovery;
-                        HorizontalLayout {
-                            padding: Size.sz4;
-                            spacing: Size.sz3;
-                            VerticalLayout {
-                                alignment: start;
-                                Icon {
-                                    name: p.is-recovery ? "hourglass" : "check-circle";
-                                    size: 36px;
-                                    color: p.is-recovery ? Liana.recovery : Liana.green;
-                                }
-                            }
-                            VerticalLayout {
-                                spacing: Size.sz1;
-                                horizontal-stretch: 1;
-                                TextSm {
-                                    text: p.kind-label;
-                                    color: p.is-recovery ? Liana.recovery : Liana.green;
-                                    bold: true;
-                                }
-                                TextLg { text: p.headline; color: Liana.on-surface; bold: true; wrap: word-wrap; }
-                                TextSm { text: p.detail; color: Liana.on-surface-dim; wrap: word-wrap; }
-                            }
+                    HorizontalLayout {
+                        alignment: center;
+                        Icon {
+                            name: root.current-path.is-recovery ? "hourglass" : "check-circle";
+                            size: 64px;
+                            color: root.current-path.is-recovery ? Liana.recovery : Liana.green;
                         }
                     }
 
-                    // Keys, each with a key icon (green when this Passport holds it).
-                    TextSm { text: TR2.lookup(TrId.ImportPathsKeysTitle); color: Palette.content-tertiary; }
-                    for s in Callbacks.detail-signers: HorizontalLayout {
-                        spacing: Size.sz3;
-                        alignment: start;
-                        VerticalLayout {
-                            alignment: center;
-                            Icon {
-                                name: "key";
-                                size: 28px;
-                                color: s.owned ? Liana.green : Palette.content-tertiary;
-                            }
-                        }
-                        VerticalLayout {
-                            spacing: Size.sz0_5;
-                            horizontal-stretch: 1;
-                            TextMd {
-                                text: s.name;
-                                color: s.owned ? Liana.green : Palette.content-primary;
-                                bold: true;
-                            }
-                            TextSm {
-                                text: TR2.format(TrId.ImportPathsKeyFingerprint, [s.fingerprint]);
-                                color: Palette.content-tertiary;
-                            }
-                        }
+                    TextSm {
+                        text: root.current-path.kind-label;
+                        color: root.current-path.is-recovery ? Liana.recovery : Liana.green;
+                        bold: true;
+                        horizontal-alignment: center;
                     }
-                    for s in Callbacks.detail-signers: VerticalLayout {
-                        if !s.owned: TitledInput {
-                            title: TR2.format(TrId.ImportPathsNameSigner, [s.fingerprint]);
-                            text: s.name;
-                            caps-mode: sentences;
-                            character-limit: 20;
-                            accepted(value) => {
-                                Callbacks.set-pending-signer-name(s.id, value);
-                            }
-                        }
+                    HeadingLg {
+                        text: root.current-path.headline;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
                     }
-                    if Callbacks.import-error != "": TextSm {
-                        text: Callbacks.import-error;
-                        color: Liana.recovery;
+                    TextMd {
+                        text: root.current-path.detail;
+                        color: Palette.content-secondary;
+                        horizontal-alignment: center;
                         wrap: word-wrap;
                     }
                 }
-            }
 
-            ButtonSection {
-                padding-left: Size.sz6;
-                padding-right: Size.sz6;
-                padding-bottom: Size.sz6;
-                LianaButton {
-                    label: TR2.lookup(TrId.ImportPathsConfirmAndAdd);
-                    primary: true;
-                    clicked => {
-                        Callbacks.confirm-import();
-                        if Callbacks.import-committed { Navigate.import-done-page({ }); }
-                    }
-                }
-                LianaButton {
-                    label: TR2.lookup(TrId.CommonButtonCancel);
-                    primary: false;
-                    clicked => {
-                        Callbacks.cancel-import();
-                        Navigate.home-page({ });
+                ButtonSection {
+                    LianaButton {
+                        label: TR2.lookup(TrId.CommonButtonContinue);
+                        primary: true;
+                        clicked => {
+                            if Callbacks.import-path-index + 1 < Callbacks.detail-paths.length {
+                                Callbacks.import-path-index += 1;
+                            } else if Callbacks.detail-signers.length > 0 {
+                                Callbacks.import-signer-index = 0;
+                                Navigate.import-signers-page({ });
+                            } else {
+                                Navigate.import-confirm-page({ });
+                            }
+                        }
                     }
                 }
             }

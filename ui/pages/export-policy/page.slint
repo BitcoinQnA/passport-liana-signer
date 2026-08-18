@@ -1,0 +1,77 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import { AppHeader, ContentSection, TextMd, TextSm, BasePage, PageBody,
+         ButtonSection, IconButton, Icon } from "@ui/widgets.slint";
+import { Importance, Palette, Size, IconSize } from "@ui/theme.slint";
+import { Callbacks } from "../../callbacks.slint";
+import { ExportPolicyPageProps } from "./props.slint";
+import { Navigate } from "../../gen/navigate.slint";
+import { TR2, TrId } from "../../gen/tr.slint";
+import { Liana } from "../../liana-theme.slint";
+import { LianaButton } from "../../liana-widgets.slint";
+
+export component ExportPolicyPagePage inherits Rectangle {
+    in property <ExportPolicyPageProps> props;
+
+    BasePage {
+        VerticalLayout {
+            AppHeader {
+                title: TR2.lookup(TrId.AdvancedBackupTitle);
+                side-padding: Size.sz6;
+                IconButton {
+                    icon: "chevron-left";
+                    size: Size.sz8;
+                    importance: Importance.normal;
+                    clicked => { Navigate.backward(); }
+                }
+                Rectangle { }
+            }
+
+            PageBody {
+                ContentSection {
+                    spacing: Size.sz6;
+                    HorizontalLayout {
+                        alignment: center;
+                        padding-top: Size.sz8;
+                        Icon {
+                            name: "export";
+                            size: IconSize.px96;
+                            color: Liana.green;
+                        }
+                    }
+                    TextMd {
+                        text: TR2.lookup(TrId.AdvancedBackupBody);
+                        color: Palette.content-secondary;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    if Callbacks.export-error != "": TextSm {
+                        text: Callbacks.export-error;
+                        color: Liana.recovery;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+
+                ButtonSection {
+                    LianaButton {
+                        label: TR2.lookup(TrId.AdvancedBackupQr);
+                        icon: "scan-qr";
+                        primary: true;
+                        clicked => { Navigate.descriptor-qr-page({ }); }
+                    }
+                    LianaButton {
+                        label: TR2.lookup(TrId.AdvancedBackupFile);
+                        icon: "save";
+                        primary: false;
+                        clicked => {
+                            Callbacks.export-policy(Callbacks.detail-id);
+                            if Callbacks.export-ok { Navigate.export-done-page({ }); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

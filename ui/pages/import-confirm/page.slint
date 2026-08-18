@@ -1,0 +1,93 @@
+// SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import { ButtonSection, ContentSection, AppHeader, HeadingLg, TextMd, TextSm,
+         BasePage, PageBody, IconButton } from "@ui/widgets.slint";
+import { Importance, Palette, Size } from "@ui/theme.slint";
+import { Callbacks } from "../../callbacks.slint";
+import { ImportConfirmPageProps } from "./props.slint";
+import { Navigate } from "../../gen/navigate.slint";
+import { TR2, TrId } from "../../gen/tr.slint";
+import { Liana } from "../../liana-theme.slint";
+import { LianaButton } from "../../liana-widgets.slint";
+
+component SummaryRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    TextMd { text: root.label; color: Palette.content-secondary; horizontal-stretch: 1; }
+    TextMd { text: root.value; color: Liana.green; bold: true; }
+}
+
+export component ImportConfirmPagePage inherits Rectangle {
+    in property <ImportConfirmPageProps> props;
+
+    BasePage {
+        VerticalLayout {
+            AppHeader {
+                title: TR2.lookup(TrId.ImportConfirmTitle);
+                side-padding: Size.sz6;
+                IconButton {
+                    icon: "chevron-left";
+                    size: Size.sz8;
+                    importance: Importance.normal;
+                    clicked => { Navigate.backward(); }
+                }
+                Rectangle { }
+            }
+
+            PageBody {
+                p-x: Size.sz4;
+                p-y: Size.sz4;
+                ContentSection {
+                    spacing: Size.sz3;
+                    HeadingLg { text: Callbacks.import-name; horizontal-alignment: center; wrap: word-wrap; }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: Size.sz2;
+                        TextSm { text: Callbacks.detail-network; color: Liana.green; }
+                        TextSm { text: Callbacks.detail-checksum; color: Palette.content-tertiary; }
+                    }
+                    TextMd {
+                        text: TR2.lookup(TrId.ImportConfirmBody);
+                        color: Palette.content-secondary;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    SummaryRow {
+                        label: TR2.lookup(TrId.ImportConfirmPaths);
+                        value: "\{Callbacks.detail-paths.length}";
+                    }
+                    SummaryRow {
+                        label: TR2.lookup(TrId.ImportConfirmSigners);
+                        value: "\{Callbacks.detail-signers.length}";
+                    }
+                    if Callbacks.import-error != "": TextSm {
+                        text: Callbacks.import-error;
+                        color: Liana.recovery;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+
+                ButtonSection {
+                    LianaButton {
+                        label: TR2.lookup(TrId.ImportPathsConfirmAndAdd);
+                        primary: true;
+                        clicked => {
+                            Callbacks.confirm-import();
+                            if Callbacks.import-committed { Navigate.import-done-page({ }); }
+                        }
+                    }
+                    LianaButton {
+                        label: TR2.lookup(TrId.CommonButtonCancel);
+                        primary: false;
+                        clicked => {
+                            Callbacks.cancel-import();
+                            Navigate.home-page({ });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
