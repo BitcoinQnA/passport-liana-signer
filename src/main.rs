@@ -12,6 +12,7 @@
 
 mod liana;
 mod master_key;
+mod theme;
 
 use std::{
     io::Read,
@@ -22,7 +23,6 @@ use std::{
 
 use anyhow::Context;
 use foundation_urtypes::value::Value as UrValue;
-use gui_permissions::GuiPermissions;
 // Bitcoin types used only by the test fixtures (seed_sample / build_owner_psbt).
 #[cfg(test)]
 use liana::bitcoin::{
@@ -43,17 +43,17 @@ use liana::{
     policy, psbt as lpsbt, signing, store, transport, RegisteredPolicy, SpendPathKind,
 };
 use slint_keyos_platform::{
-    app,
-    gui_server_api::navigation::{
-        filepicker::{AllowedExtensions, AllowedLocations, Location as PickLocation, SelectFileOptions},
-        qrscanner::{ScanQrOptions, ScanQrResult},
+    app_ui2,
+    gui_server_api::{
+        navigation::qrscanner::{MatchedQrResult, ScanQrResult},
+        InputMessage,
     },
-    navigation::{open_qr_scanner, select_file},
     slint::{ComponentHandle, ModelRc, VecModel},
     spawn_local, spawn_worker,
 };
 
-app!("Liana");
+app_ui2!("Liana");
+include!(concat!(env!("OUT_DIR"), "/tr.rs"));
 
 const DEFAULT_NETWORK: Network = Network::Bitcoin;
 const LIANA_ACCOUNT: u32 = 0;
@@ -95,6 +95,11 @@ struct AppState {
     last_signed: Option<Vec<u8>>,
     /// Bound address-verification JSON returned to Liana as `ur:bytes`.
     last_address_response: Option<Vec<u8>>,
+    /// Inputs delivered by the launcher's universal QR scanner. Independent
+    /// SDK applications receive matching scans through NavigationFocused.
+    incoming_policy: Option<String>,
+    incoming_psbt: Option<Psbt>,
+    incoming_address: Option<AddressScan>,
 }
 
 /// A PSBT awaiting the user's sign/reject decision, with the policy + match it
@@ -109,10 +114,15 @@ enum AddressScan {
     Address(String),
 }
 
-fn app_main(_cx: AppContext, ui: AppWindow) {
+fn app_main(cx: AppContext, ui: AppWindow) {
     log_server::init_wait(env!("CARGO_CRATE_NAME")).unwrap();
     log::set_max_level(log::LevelFilter::Info);
     log::info!("Starting Liana Signer");
+
+    theme::init(&ui);
+    init_tr!(ui);
+    ui.global::<Utils>()
+        .on_qrcode(slint_keyos_platform::qrcode::render);
 
     let secp = Secp256k1::new();
     let seed = match master_key::app_wallet_seed() {
@@ -148,6 +158,9 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
         pending_import: None,
         last_signed: None,
         last_address_response: None,
+        incoming_policy: None,
+        incoming_psbt: None,
+        incoming_address: None,
     }));
 
     refresh_home(&ui, &state);
@@ -181,10 +194,15 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
     {
         let state = state.clone();
         let weak = ui.as_weak();
-        ui.global::<Callbacks>().on_set_xpub_network(move |network| {
-            let Some(ui) = weak.upgrade() else { return };
-            set_xpub_export(&ui, &state, network_from_label(network.as_str()).unwrap_or(DEFAULT_NETWORK));
-        });
+        ui.global::<Callbacks>()
+            .on_set_xpub_network(move |network| {
+                let Some(ui) = weak.upgrade() else { return };
+                set_xpub_export(
+                    &ui,
+                    &state,
+                    network_from_label(network.as_str()).unwrap_or(DEFAULT_NETWORK),
+                );
+            });
     }
 
     // -- animated crypto-account QR ----------------------------------------
@@ -192,8 +210,8 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
         let state = state.clone();
         ui.global::<Callbacks>().on_xpub_qr_parts(move |density| {
             let st = state.lock().unwrap();
-            let result =
-                account_xpub(st.seed.as_bytes(), &st.secp, st.xpub_network, LIANA_ACCOUNT).and_then(|xpub| {
+            let result = account_xpub(st.seed.as_bytes(), &st.secp, st.xpub_network, LIANA_ACCOUNT)
+                .and_then(|xpub| {
                     transport::encode_crypto_account(
                         st.fp,
                         xpub.parent_fingerprint,
@@ -204,9 +222,11 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     .map_err(|e| anyhow::anyhow!(e.to_string()))
                 });
             match result {
-                Ok(cbor) => {
-                    slint_keyos_platform::qrcode::encode_qr_parts("crypto-account", cbor, density.max(100))
-                }
+                Ok(cbor) => slint_keyos_platform::qrcode::encode_qr_parts(
+                    "crypto-account",
+                    cbor,
+                    density.max(100),
+                ),
                 Err(e) => {
                     log::error!("could not encode Liana crypto-account: {e}");
                     Default::default()
@@ -223,8 +243,14 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
             let Some(ui) = weak.upgrade() else { return };
             let key = {
                 let st = state.lock().unwrap();
-                key_with_origin(st.seed.as_bytes(), &st.secp, st.fp, st.xpub_network, LIANA_ACCOUNT)
-                    .unwrap_or_else(|_| String::new())
+                key_with_origin(
+                    st.seed.as_bytes(),
+                    &st.secp,
+                    st.fp,
+                    st.xpub_network,
+                    LIANA_ACCOUNT,
+                )
+                .unwrap_or_else(|_| String::new())
             };
             let cb = ui.global::<Callbacks>();
             cb.set_export_ok(false);
@@ -232,20 +258,28 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 cb.set_export_error(tr::lookup_id(TrId::ErrorXpubDeriveFailed).into());
                 return;
             }
-            match export_via_picker(EXPORT_KEY_FILE, key.as_bytes()) {
+            match export_exchange_file(EXPORT_KEY_FILE, key.as_bytes()) {
                 Ok(dest) => {
                     cb.set_export_error("".into());
                     cb.set_export_done_title(tr::lookup_id(TrId::ExportKeySavedTitle).into());
                     cb.set_export_done_detail(
-                        format!("{}\n{}", format_saved_to(&dest), tr::lookup_id(TrId::ExportKeySavedDetail))
-                            .into(),
+                        format!(
+                            "{}\n{}",
+                            format_saved_to(&dest),
+                            tr::lookup_id(TrId::ExportKeySavedDetail)
+                        )
+                        .into(),
                     );
                     cb.set_export_ok(true);
                 }
                 Err(e) => {
                     let msg = format!("{e}");
                     // A user cancel is not an error to surface.
-                    cb.set_export_error(if msg.contains("cancelled") { "".into() } else { msg.into() });
+                    cb.set_export_error(if msg.contains("cancelled") {
+                        "".into()
+                    } else {
+                        msg.into()
+                    });
                 }
             }
         });
@@ -272,19 +306,25 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
             // Load the PSBT. The sim bridge (DATA_SUBDIR/unsigned.psbt) wins if
             // present; otherwise scan Liana's animated `crypto-psbt` QR. The
             // scanner's file button keeps binary microSD as the large-PSBT fallback.
+            let incoming = { state.lock().unwrap().incoming_psbt.take() };
             let bridge = { sim_bridge_file(&state.lock().unwrap().data_dir, UNSIGNED_PSBT_FILE) };
-            let psbt = if let Some(bridge) = bridge {
+            let psbt = if let Some(psbt) = incoming {
+                psbt
+            } else if let Some(bridge) = bridge {
                 match read_psbt_file(&bridge) {
                     Ok(p) => p,
                     Err(e) => {
                         let err = format!("{e}");
-                        review_message(&ui, &trfmt(TrId::ErrorReadNamedFile, &[UNSIGNED_PSBT_FILE, &err]));
+                        review_message(
+                            &ui,
+                            &trfmt(TrId::ErrorReadNamedFile, &[UNSIGNED_PSBT_FILE, &err]),
+                        );
                         ui.global::<Callbacks>().set_review_ready(true);
                         return;
                     }
                 }
             } else {
-                match scan_psbt_or_file() {
+                match read_psbt_exchange_file() {
                     Ok(p) => p,
                     Err(e) => {
                         // A user cancel is not an error: stay on home silently.
@@ -330,7 +370,9 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                         set_status(&ui, tr::lookup_id(TrId::StatusLoadedPsbt));
                     }
                     Ok(None) => review_message(&ui, tr::lookup_id(TrId::ReviewNoMatch)),
-                    Err(e) => review_message(&ui, &trfmt(TrId::ErrorMatchFailed, &[&e.to_string()])),
+                    Err(e) => {
+                        review_message(&ui, &trfmt(TrId::ErrorMatchFailed, &[&e.to_string()]))
+                    }
                 }
                 ui.global::<Callbacks>().set_psbt_loading(false);
             })
@@ -347,15 +389,22 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
             let expected_checksum = id.to_string();
             clear_verify(&ui);
             state.lock().unwrap().last_address_response = None;
+            let incoming = { state.lock().unwrap().incoming_address.take() };
             let bridge = {
                 let st = state.lock().unwrap();
                 sim_bridge_file(&st.data_dir, VERIFY_ADDRESS_FILE)
             };
-            let scan = if let Some(bridge) = bridge {
-                read_bytes_path_limited(&bridge, transport::MAX_JSON_BYTES as u64, "address request")
-                    .map(AddressScan::Request)
+            let scan = if let Some(scan) = incoming {
+                Ok(scan)
+            } else if let Some(bridge) = bridge {
+                read_bytes_path_limited(
+                    &bridge,
+                    transport::MAX_JSON_BYTES as u64,
+                    "address request",
+                )
+                .map(AddressScan::Request)
             } else {
-                scan_address_verification()
+                read_address_exchange_file()
             };
             let scan = match scan {
                 Ok(scan) => scan,
@@ -363,7 +412,10 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     if error.to_string().contains("cancelled") {
                         return;
                     }
-                    show_verify_error(&ui, &trfmt(TrId::VerifyRequestInvalid, &[&error.to_string()]));
+                    show_verify_error(
+                        &ui,
+                        &trfmt(TrId::VerifyRequestInvalid, &[&error.to_string()]),
+                    );
                     return;
                 }
             };
@@ -394,19 +446,27 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                             tr::lookup_id(TrId::VerifyReceiveKind)
                         };
                         cb.set_verify_detail(
-                            trfmt(TrId::VerifySuccessDetail, &[&policy.name, kind, &index.to_string()])
-                                .into(),
+                            trfmt(
+                                TrId::VerifySuccessDetail,
+                                &[&policy.name, kind, &index.to_string()],
+                            )
+                            .into(),
                         );
                     }
                     Err(error) => show_verify_error(&ui, &error.to_string()),
                 }
                 return;
             }
-            let AddressScan::Request(request_bytes) = scan else { return };
+            let AddressScan::Request(request_bytes) = scan else {
+                return;
+            };
             let request = match transport::AddressVerificationRequest::from_json(&request_bytes) {
                 Ok(request) => request,
                 Err(error) => {
-                    show_verify_error(&ui, &trfmt(TrId::VerifyRequestInvalid, &[&error.to_string()]));
+                    show_verify_error(
+                        &ui,
+                        &trfmt(TrId::VerifyRequestInvalid, &[&error.to_string()]),
+                    );
                     return;
                 }
             };
@@ -416,30 +476,36 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     .all()
                     .iter()
                     .find(|policy| {
-                        (expected_checksum.is_empty() || policy.descriptor_checksum == expected_checksum)
+                        (expected_checksum.is_empty()
+                            || policy.descriptor_checksum == expected_checksum)
                             && policy.policy_id == request.policy_id
-                            && policy.descriptor_checksum.eq_ignore_ascii_case(&request.descriptor_checksum)
-                            && network_from_policy(policy)
-                                .and_then(|network| transport::PolicyNetwork::from_network(network).ok())
-                                == Some(request.network)
+                            && policy
+                                .descriptor_checksum
+                                .eq_ignore_ascii_case(&request.descriptor_checksum)
+                            && network_from_policy(policy).and_then(|network| {
+                                transport::PolicyNetwork::from_network(network).ok()
+                            }) == Some(request.network)
                             && policy_is_signable(policy)
                     })
                     .cloned()
                     .context("wallet policy is not registered")
                     .and_then(|policy| {
                         verify_registered_key(&policy, st.seed.as_bytes(), &st.secp, st.fp)?;
-                        let network =
-                            network_from_policy(&policy).context("wallet policy network is unsupported")?;
+                        let network = network_from_policy(&policy)
+                            .context("wallet policy network is unsupported")?;
                         let address = derive_policy_address(
                             &policy.descriptor,
                             request.branch,
                             request.index,
                             network,
                         )?;
-                        let response =
-                            transport::AddressVerificationResponse::new(&request, address.clone(), st.fp)
-                                .to_json()
-                                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                        let response = transport::AddressVerificationResponse::new(
+                            &request,
+                            address.clone(),
+                            st.fp,
+                        )
+                        .to_json()
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                         st.last_address_response = Some(response);
                         Ok((policy.name, address))
                     })
@@ -460,7 +526,11 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                         tr::lookup_id(TrId::VerifyReceiveKind)
                     };
                     cb.set_verify_detail(
-                        trfmt(TrId::VerifySuccessDetail, &[&name, kind, &request.index.to_string()]).into(),
+                        trfmt(
+                            TrId::VerifySuccessDetail,
+                            &[&name, kind, &request.index.to_string()],
+                        )
+                        .into(),
                     );
                 }
                 Err(error) => {
@@ -503,8 +573,10 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 // Security gate (defence-in-depth beyond the UI flag): refuse
                 // unless the PSBT matched the policy and Passport owns a key on
                 // the active path.
-                let current_policy =
-                    st.policies.find_by_checksum(&pending.policy.descriptor_checksum).cloned();
+                let current_policy = st
+                    .policies
+                    .find_by_checksum(&pending.policy.descriptor_checksum)
+                    .cloned();
                 let Some(current_policy) = current_policy.filter(policy_is_signable) else {
                     ui.global::<Callbacks>().set_signing(false);
                     set_status(&ui, tr::lookup_id(TrId::ErrorPolicyNotFound));
@@ -514,18 +586,26 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     verify_registered_key(&current_policy, st.seed.as_bytes(), &st.secp, st.fp)
                 {
                     ui.global::<Callbacks>().set_signing(false);
-                    set_status(&ui, &trfmt(TrId::ErrorSigningRefused, &[&error.to_string()]));
+                    set_status(
+                        &ui,
+                        &trfmt(TrId::ErrorSigningRefused, &[&error.to_string()]),
+                    );
                     return;
                 }
                 let matched = match lpsbt::match_psbt(&pending.psbt, &current_policy, st.fp) {
                     Ok(matched) => matched,
                     Err(error) => {
                         ui.global::<Callbacks>().set_signing(false);
-                        set_status(&ui, &trfmt(TrId::ErrorSigningRefused, &[&error.to_string()]));
+                        set_status(
+                            &ui,
+                            &trfmt(TrId::ErrorSigningRefused, &[&error.to_string()]),
+                        );
                         return;
                     }
                 };
-                if let signing::SignDecision::Refuse(reason) = signing::decide(&matched, &current_policy) {
+                if let signing::SignDecision::Refuse(reason) =
+                    signing::decide(&matched, &current_policy)
+                {
                     ui.global::<Callbacks>().set_signing(false);
                     set_status(&ui, &trfmt(TrId::ErrorRefused, &[&reason]));
                     return;
@@ -606,11 +686,13 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
             };
             // Save to a chosen location via the picker. On success route to the
             // shared full-screen success; on failure surface the reason inline.
-            match export_via_picker(&filename, &bytes) {
+            match export_exchange_file(&filename, &bytes) {
                 Ok(dest) => {
                     cb.set_review_saved(true);
                     cb.set_review_signed_detail("".into());
-                    cb.set_export_done_title(tr::lookup_id(TrId::ExportTransactionSignedTitle).into());
+                    cb.set_export_done_title(
+                        tr::lookup_id(TrId::ExportTransactionSignedTitle).into(),
+                    );
                     cb.set_export_done_detail(
                         format!(
                             "{}\n{}",
@@ -638,35 +720,41 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
     // -- animated signed-PSBT response -------------------------------------
     {
         let state = state.clone();
-        ui.global::<Callbacks>().on_signed_psbt_qr_parts(move |density| {
-            let Some(bytes) = state.lock().unwrap().last_signed.clone() else {
-                return Default::default();
-            };
-            match registry_bytes_cbor(&bytes) {
-                Ok(cbor) => slint_keyos_platform::qrcode::encode_qr_parts("crypto-psbt", cbor, density),
-                Err(error) => {
-                    log::error!("could not encode signed PSBT QR: {error}");
-                    Default::default()
+        ui.global::<Callbacks>()
+            .on_signed_psbt_qr_parts(move |density| {
+                let Some(bytes) = state.lock().unwrap().last_signed.clone() else {
+                    return Default::default();
+                };
+                match registry_bytes_cbor(&bytes) {
+                    Ok(cbor) => {
+                        slint_keyos_platform::qrcode::encode_qr_parts("crypto-psbt", cbor, density)
+                    }
+                    Err(error) => {
+                        log::error!("could not encode signed PSBT QR: {error}");
+                        Default::default()
+                    }
                 }
-            }
-        });
+            });
     }
 
     // -- animated bound address response -----------------------------------
     {
         let state = state.clone();
-        ui.global::<Callbacks>().on_address_response_qr_parts(move |density| {
-            let Some(bytes) = state.lock().unwrap().last_address_response.clone() else {
-                return Default::default();
-            };
-            match registry_bytes_cbor(&bytes) {
-                Ok(cbor) => slint_keyos_platform::qrcode::encode_qr_parts("bytes", cbor, density),
-                Err(error) => {
-                    log::error!("could not encode address response QR: {error}");
-                    Default::default()
+        ui.global::<Callbacks>()
+            .on_address_response_qr_parts(move |density| {
+                let Some(bytes) = state.lock().unwrap().last_address_response.clone() else {
+                    return Default::default();
+                };
+                match registry_bytes_cbor(&bytes) {
+                    Ok(cbor) => {
+                        slint_keyos_platform::qrcode::encode_qr_parts("bytes", cbor, density)
+                    }
+                    Err(error) => {
+                        log::error!("could not encode address response QR: {error}");
+                        Default::default()
+                    }
                 }
-            }
-        });
+            });
     }
 
     // -- import policy: pick a descriptor file via the file-browser overlay -
@@ -679,6 +767,7 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
             // descriptor in the app-data folder, use it. Otherwise open the
             // device file picker (the real-Prime path). Don't hold the lock
             // across the modal picker.
+            let incoming = { state.lock().unwrap().incoming_policy.take() };
             let bridge = {
                 let st = state.lock().unwrap();
                 sim_bridge_file(&st.data_dir, IMPORT_DESCRIPTOR_FILE)
@@ -690,17 +779,20 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 cb.set_import_path_index(0);
                 cb.set_import_signer_index(0);
             }
-            let text = if let Some(bridge) = bridge {
+            let text = if let Some(text) = incoming {
+                text
+            } else if let Some(bridge) = bridge {
                 match read_text_path_limited(&bridge, MAX_DESCRIPTOR_BYTES, "descriptor") {
                     Ok(t) => t,
                     Err(e) => {
-                        ui.global::<Callbacks>()
-                            .set_import_error(trfmt(TrId::ErrorReadFile, &[&format!("{e}")]).into());
+                        ui.global::<Callbacks>().set_import_error(
+                            trfmt(TrId::ErrorReadFile, &[&format!("{e}")]).into(),
+                        );
                         return;
                     }
                 }
             } else {
-                match scan_or_import_policy() {
+                match import_policy_exchange_file() {
                     Ok(t) => t,
                     Err(e) => {
                         // "cancelled" is a normal user action, not an error to show.
@@ -725,8 +817,15 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     st.xpub_network,
                 ) {
                     Ok(reg) => {
-                        if st.policies.find_by_checksum(&reg.descriptor_checksum).is_some() {
-                            Err(trfmt(TrId::ImportErrorDuplicate, &[&reg.descriptor_checksum]))
+                        if st
+                            .policies
+                            .find_by_checksum(&reg.descriptor_checksum)
+                            .is_some()
+                        {
+                            Err(trfmt(
+                                TrId::ImportErrorDuplicate,
+                                &[&reg.descriptor_checksum],
+                            ))
                         } else {
                             st.pending_import = Some(reg.clone());
                             Ok(reg)
@@ -762,11 +861,16 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
         ui.global::<Callbacks>().on_confirm_import(move || {
             let Some(ui) = weak.upgrade() else { return };
             // Apply the user-chosen name (fall back to the default if blank).
-            let chosen = ui.global::<Callbacks>().get_import_name().trim().to_string();
+            let chosen = ui
+                .global::<Callbacks>()
+                .get_import_name()
+                .trim()
+                .to_string();
             let chosen = match validate_policy_name(&chosen) {
                 Ok(name) => name,
                 Err(error) => {
-                    ui.global::<Callbacks>().set_import_error(error.to_string().into());
+                    ui.global::<Callbacks>()
+                        .set_import_error(error.to_string().into());
                     return;
                 }
             };
@@ -776,9 +880,11 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                     Some(mut reg) => {
                         reg.name = chosen;
                         match save_policy(&st.data_dir, &reg) {
-                            Ok(()) => {
-                                st.policies.add(reg.clone()).map(|_| reg).map_err(|e| anyhow::anyhow!("{e}"))
-                            }
+                            Ok(()) => st
+                                .policies
+                                .add(reg.clone())
+                                .map(|_| reg)
+                                .map_err(|e| anyhow::anyhow!("{e}")),
                             Err(e) => {
                                 st.pending_import = Some(reg);
                                 Err(e)
@@ -828,31 +934,32 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
     {
         let state = state.clone();
         let weak = ui.as_weak();
-        ui.global::<Callbacks>().on_set_pending_signer_name(move |id, name| {
-            let Some(ui) = weak.upgrade() else { return };
-            let name = match validate_signer_name(name.as_str()) {
-                Ok(name) => name,
-                Err(error) => {
-                    ui.global::<Callbacks>().set_import_error(error.to_string().into());
-                    return;
+        ui.global::<Callbacks>()
+            .on_set_pending_signer_name(move |id, name| {
+                let Some(ui) = weak.upgrade() else { return };
+                let name = match validate_signer_name(name.as_str()) {
+                    Ok(name) => name,
+                    Err(error) => {
+                        ui.global::<Callbacks>()
+                            .set_import_error(error.to_string().into());
+                        return;
+                    }
+                };
+                let updated = {
+                    let mut st = state.lock().unwrap();
+                    st.pending_import.as_mut().and_then(|policy| {
+                        let signer = policy.signers.iter_mut().find(|signer| {
+                            signer.xpub == id.as_str() && !signer.owned_by_passport
+                        })?;
+                        signer.name = name;
+                        Some(policy.clone())
+                    })
+                };
+                if let Some(policy) = updated {
+                    ui.global::<Callbacks>().set_import_error("".into());
+                    populate_detail(&ui, &policy);
                 }
-            };
-            let updated = {
-                let mut st = state.lock().unwrap();
-                st.pending_import.as_mut().and_then(|policy| {
-                    let signer = policy
-                        .signers
-                        .iter_mut()
-                        .find(|signer| signer.xpub == id.as_str() && !signer.owned_by_passport)?;
-                    signer.name = name;
-                    Some(policy.clone())
-                })
-            };
-            if let Some(policy) = updated {
-                ui.global::<Callbacks>().set_import_error("".into());
-                populate_detail(&ui, &policy);
-            }
-        });
+            });
     }
 
     // -- rename policy ------------------------------------------------------
@@ -890,31 +997,35 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
     {
         let state = state.clone();
         let weak = ui.as_weak();
-        ui.global::<Callbacks>().on_rename_signer(move |policy_id, signer_id, name| {
-            let Some(ui) = weak.upgrade() else { return };
-            let name = match validate_signer_name(name.as_str()) {
-                Ok(name) => name,
-                Err(error) => {
-                    set_status(&ui, &error.to_string());
-                    return;
+        ui.global::<Callbacks>()
+            .on_rename_signer(move |policy_id, signer_id, name| {
+                let Some(ui) = weak.upgrade() else { return };
+                let name = match validate_signer_name(name.as_str()) {
+                    Ok(name) => name,
+                    Err(error) => {
+                        set_status(&ui, &error.to_string());
+                        return;
+                    }
+                };
+                let result = {
+                    let mut st = state.lock().unwrap();
+                    let dir = st.data_dir.clone();
+                    match st
+                        .policies
+                        .set_signer_name(policy_id.as_str(), signer_id.as_str(), &name)
+                    {
+                        Some(updated) => save_policy(&dir, &updated).map(|_| updated),
+                        None => Err(anyhow::anyhow!("External signer was not found.")),
+                    }
+                };
+                match result {
+                    Ok(updated) => {
+                        populate_detail(&ui, &updated);
+                        set_status(&ui, tr::lookup_id(TrId::StatusSignerNameSaved));
+                    }
+                    Err(error) => set_status(&ui, &error.to_string()),
                 }
-            };
-            let result = {
-                let mut st = state.lock().unwrap();
-                let dir = st.data_dir.clone();
-                match st.policies.set_signer_name(policy_id.as_str(), signer_id.as_str(), &name) {
-                    Some(updated) => save_policy(&dir, &updated).map(|_| updated),
-                    None => Err(anyhow::anyhow!("External signer was not found.")),
-                }
-            };
-            match result {
-                Ok(updated) => {
-                    populate_detail(&ui, &updated);
-                    set_status(&ui, tr::lookup_id(TrId::StatusSignerNameSaved));
-                }
-                Err(error) => set_status(&ui, &error.to_string()),
-            }
-        });
+            });
     }
     // -- delete policy: store + disk ----------------------------------------
     {
@@ -957,7 +1068,11 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 match st.policies.find_by_checksum(id.as_str()) {
                     Some(reg) => {
                         let filename = format!("liana-descriptor-{id}.txt");
-                        (reg.descriptor.clone(), st.data_dir.join(&filename), filename)
+                        (
+                            reg.descriptor.clone(),
+                            st.data_dir.join(&filename),
+                            filename,
+                        )
                     }
                     None => {
                         set_status(&ui, tr::lookup_id(TrId::ErrorPolicyNotFound));
@@ -970,10 +1085,12 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
             // On device, save to a chosen location via the picker.
             let cb = ui.global::<Callbacks>();
             cb.set_export_ok(false);
-            match export_via_picker(&filename, descriptor.as_bytes()) {
+            match export_exchange_file(&filename, descriptor.as_bytes()) {
                 Ok(dest) => {
                     cb.set_export_error("".into());
-                    cb.set_export_done_title(tr::lookup_id(TrId::ExportDescriptorSavedTitle).into());
+                    cb.set_export_done_title(
+                        tr::lookup_id(TrId::ExportDescriptorSavedTitle).into(),
+                    );
                     cb.set_export_done_detail(
                         format!(
                             "{}\n{}",
@@ -986,7 +1103,11 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
                 }
                 Err(e) => {
                     let msg = format!("{e}");
-                    cb.set_export_error(if msg.contains("cancelled") { "".into() } else { msg.into() });
+                    cb.set_export_error(if msg.contains("cancelled") {
+                        "".into()
+                    } else {
+                        msg.into()
+                    });
                 }
             }
         });
@@ -995,25 +1116,32 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
     // -- canonical wallet-policy backup QR ---------------------------------
     {
         let state = state.clone();
-        ui.global::<Callbacks>().on_policy_qr_parts(move |id, density| {
-            let bytes = {
-                let st = state.lock().unwrap();
-                st.policies
-                    .find_by_checksum(id.as_str())
-                    .and_then(|policy| transport::PolicyRegistration::from_registered(policy).ok())
-                    .and_then(|registration| transport::encode_json(&registration).ok())
-            };
-            let Some(bytes) = bytes else {
-                return Default::default();
-            };
-            match registry_bytes_cbor(&bytes) {
-                Ok(cbor) => slint_keyos_platform::qrcode::encode_qr_parts("bytes", cbor, density.max(100)),
-                Err(error) => {
-                    log::error!("could not encode wallet-policy backup QR: {error}");
-                    Default::default()
+        ui.global::<Callbacks>()
+            .on_policy_qr_parts(move |id, density| {
+                let bytes = {
+                    let st = state.lock().unwrap();
+                    st.policies
+                        .find_by_checksum(id.as_str())
+                        .and_then(|policy| {
+                            transport::PolicyRegistration::from_registered(policy).ok()
+                        })
+                        .and_then(|registration| transport::encode_json(&registration).ok())
+                };
+                let Some(bytes) = bytes else {
+                    return Default::default();
+                };
+                match registry_bytes_cbor(&bytes) {
+                    Ok(cbor) => slint_keyos_platform::qrcode::encode_qr_parts(
+                        "bytes",
+                        cbor,
+                        density.max(100),
+                    ),
+                    Err(error) => {
+                        log::error!("could not encode wallet-policy backup QR: {error}");
+                        Default::default()
+                    }
                 }
-            }
-        });
+            });
     }
 
     // -- canonical wallet-policy backup file -------------------------------
@@ -1024,18 +1152,24 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
             let Some(ui) = weak.upgrade() else { return };
             let result = {
                 let st = state.lock().unwrap();
-                let policy = st.policies.find_by_checksum(id.as_str()).context("wallet policy was not found");
+                let policy = st
+                    .policies
+                    .find_by_checksum(id.as_str())
+                    .context("wallet policy was not found");
                 policy.and_then(|policy| {
                     let registration = transport::PolicyRegistration::from_registered(policy)
                         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
                     let bytes = transport::encode_json(&registration)
                         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                    Ok((format!("{}-policy.json", safe_filename(&policy.name)), bytes))
+                    Ok((
+                        format!("{}-policy.json", safe_filename(&policy.name)),
+                        bytes,
+                    ))
                 })
             };
             let cb = ui.global::<Callbacks>();
             cb.set_export_ok(false);
-            match result.and_then(|(filename, bytes)| export_via_picker(&filename, &bytes)) {
+            match result.and_then(|(filename, bytes)| export_exchange_file(&filename, &bytes)) {
                 Ok(dest) => {
                     cb.set_export_error("".into());
                     cb.set_export_done_title(tr::lookup_id(TrId::ExportPolicySavedTitle).into());
@@ -1061,6 +1195,63 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
         });
     }
 
+    // Universal-QR handoff from the KeyOS launcher. Public SDK applications
+    // cannot open the privileged scanner directly; matching scans arrive here
+    // after the launcher focuses this app.
+    cx.set_input_handler({
+        let gui = cx.gui.clone();
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move |input| {
+            if input.msg != InputMessage::NavigationFocused {
+                return;
+            }
+            let Some(ui) = weak.upgrade() else { return };
+            let Ok(Some(bytes)) = gui.navigate_pending() else {
+                log::warn!("launcher focused Liana without a pending QR handoff");
+                return;
+            };
+            let Some(result) = MatchedQrResult::from_slice(&bytes) else {
+                set_status(&ui, "Could not read the launcher QR handoff.");
+                return;
+            };
+            match launcher_input(result) {
+                Ok(LauncherInput::Psbt(psbt)) => {
+                    state.lock().unwrap().incoming_psbt = Some(psbt);
+                    ui.global::<Callbacks>().invoke_sign_psbt("".into());
+                    ui.global::<Navigate>().invoke_review_page(NavigateOptions {
+                        replace: false,
+                        animate: Animate::None,
+                    });
+                }
+                Ok(LauncherInput::Policy(policy)) => {
+                    state.lock().unwrap().incoming_policy = Some(policy);
+                    ui.global::<Callbacks>().invoke_import_policy();
+                    if state.lock().unwrap().pending_import.is_some() {
+                        ui.global::<Navigate>()
+                            .invoke_import_review_page(NavigateOptions {
+                                replace: false,
+                                animate: Animate::None,
+                            });
+                    }
+                }
+                Ok(LauncherInput::Address(request)) => {
+                    let checksum = transport::AddressVerificationRequest::from_json(&request)
+                        .map(|request| request.descriptor_checksum)
+                        .unwrap_or_default();
+                    state.lock().unwrap().incoming_address = Some(AddressScan::Request(request));
+                    ui.global::<Callbacks>()
+                        .invoke_verify_address(checksum.into());
+                    ui.global::<Navigate>().invoke_verify_page(NavigateOptions {
+                        replace: false,
+                        animate: Animate::None,
+                    });
+                }
+                Err(error) => set_status(&ui, &error.to_string()),
+            }
+        }
+    });
+
     ui.run().expect("UI running");
 }
 
@@ -1069,7 +1260,9 @@ fn app_main(_cx: AppContext, ui: AppWindow) {
 // ---------------------------------------------------------------------------
 
 fn policy_row(p: &RegisteredPolicy) -> PolicyRow {
-    let network = network_from_policy(p).map(network_display).unwrap_or(p.network.as_str());
+    let network = network_from_policy(p)
+        .map(network_display)
+        .unwrap_or(p.network.as_str());
     PolicyRow {
         id: p.descriptor_checksum.clone().into(),
         name: p.name.clone().into(),
@@ -1095,23 +1288,31 @@ fn populate_detail(ui: &AppWindow, reg: &RegisteredPolicy) {
     cb.set_rename_value(reg.name.clone().into());
     cb.set_detail_checksum(format!("#{}", reg.descriptor_checksum).into());
     cb.set_detail_network(
-        network_from_policy(reg).map(network_display).unwrap_or(reg.network.as_str()).into(),
+        network_from_policy(reg)
+            .map(network_display)
+            .unwrap_or(reg.network.as_str())
+            .into(),
     );
     cb.set_detail_descriptor(reg.descriptor.clone().into());
 
     // Number recovery tiers when there is more than one (a decaying policy), so
     // "Recovery path 1 / 2 / 3" disambiguate the cards; a lone recovery stays
     // just "Recovery path".
-    let recovery_total = reg.paths.iter().filter(|p| matches!(p.kind, SpendPathKind::Recovery)).count();
+    let recovery_total = reg
+        .paths
+        .iter()
+        .filter(|p| matches!(p.kind, SpendPathKind::Recovery))
+        .count();
     let mut recovery_seen = 0usize;
     let mut paths: Vec<PathRow> = Vec::with_capacity(reg.paths.len());
     for p in &reg.paths {
         let is_recovery = matches!(p.kind, SpendPathKind::Recovery);
         // Does Passport own a key on this path?
-        let owned = p
-            .signer_fingerprints
-            .iter()
-            .any(|fp| reg.signers.iter().any(|s| &s.fingerprint == fp && s.owned_by_passport));
+        let owned = p.signer_fingerprints.iter().any(|fp| {
+            reg.signers
+                .iter()
+                .any(|s| &s.fingerprint == fp && s.owned_by_passport)
+        });
         // Natural phrasing, avoiding "1 key(s)". Singular keys get "the key";
         // all-of-N gets "all N keys"; thresholds get "M of N keys".
         let who = if p.total_keys == 1 {
@@ -1119,15 +1320,21 @@ fn populate_detail(ui: &AppWindow, reg: &RegisteredPolicy) {
         } else if p.threshold == p.total_keys {
             trfmt(TrId::PathAllKeys, &[&p.total_keys.to_string()])
         } else {
-            trfmt(TrId::PathThresholdKeys, &[&p.threshold.to_string(), &p.total_keys.to_string()])
+            trfmt(
+                TrId::PathThresholdKeys,
+                &[&p.threshold.to_string(), &p.total_keys.to_string()],
+            )
         };
         let (headline, detail) = if is_recovery {
             let n = p.relative_timelock_blocks.unwrap_or(0);
             let months = n / 4380;
             let blocks = commas(n);
             let months = months.to_string();
-            let sig =
-                if owned { tr::lookup_id(TrId::PathThisPassportHoldsOne).to_string() } else { String::new() };
+            let sig = if owned {
+                tr::lookup_id(TrId::PathThisPassportHoldsOne).to_string()
+            } else {
+                String::new()
+            };
             (
                 trfmt(TrId::PathAfterMonths, &[&months]),
                 trfmt(TrId::PathRecoveryDetail, &[&blocks, &months, &who, &sig]),
@@ -1196,9 +1403,10 @@ fn populate_review(ui: &AppWindow, reg: &RegisteredPolicy, psbt: &Psbt, m: &lpsb
 
     let path_label = match m.active_path {
         Some(SpendPathKind::Primary) => tr::lookup_id(TrId::ReviewPathPrimary).to_string(),
-        Some(SpendPathKind::Recovery) => {
-            trfmt(TrId::ReviewPathRecovery, &[&m.active_timelock_blocks.unwrap_or(0).to_string()])
-        }
+        Some(SpendPathKind::Recovery) => trfmt(
+            TrId::ReviewPathRecovery,
+            &[&m.active_timelock_blocks.unwrap_or(0).to_string()],
+        ),
         None => tr::lookup_id(TrId::ReviewPathUnknown).to_string(),
     };
     cb.set_review_path_label(path_label.into());
@@ -1206,9 +1414,17 @@ fn populate_review(ui: &AppWindow, reg: &RegisteredPolicy, psbt: &Psbt, m: &lpsb
     // Outputs + fee. Build one row per output, flagging the ones that pay back
     // into this wallet (change) vs the ones actually leaving (destinations), so
     // the UI can separate them visually and we can total what's truly sent.
-    let out_sum: u64 = psbt.unsigned_tx.output.iter().map(|o| o.value.to_sat()).sum();
-    let in_sum: u64 =
-        psbt.inputs.iter().filter_map(|i| i.witness_utxo.as_ref().map(|u| u.value.to_sat())).sum();
+    let out_sum: u64 = psbt
+        .unsigned_tx
+        .output
+        .iter()
+        .map(|o| o.value.to_sat())
+        .sum();
+    let in_sum: u64 = psbt
+        .inputs
+        .iter()
+        .filter_map(|i| i.witness_utxo.as_ref().map(|u| u.value.to_sat()))
+        .sum();
 
     let mut rows: Vec<OutputRow> = Vec::new();
     let mut leaving: u64 = 0;
@@ -1260,7 +1476,10 @@ fn populate_review(ui: &AppWindow, reg: &RegisteredPolicy, psbt: &Psbt, m: &lpsb
     if total_leaving > 0 && fee > 0 {
         let fee_percent = ((fee as u128) * 100 / (total_leaving as u128)) as u64;
         if fee_percent >= HIGH_FEE_WARNING_PERCENT {
-            warnings.push(trfmt(TrId::ReviewHighFeeWarning, &[&fee_percent.to_string()]));
+            warnings.push(trfmt(
+                TrId::ReviewHighFeeWarning,
+                &[&fee_percent.to_string()],
+            ));
         }
     }
     cb.set_review_warning(warnings.join("\n").into());
@@ -1270,7 +1489,9 @@ fn populate_review(ui: &AppWindow, reg: &RegisteredPolicy, psbt: &Psbt, m: &lpsb
     } else if !m.passport_can_sign {
         let reason = match signing::decide(m, reg) {
             signing::SignDecision::Refuse(reason) => reason,
-            signing::SignDecision::Allow { .. } => tr::lookup_id(TrId::ReviewNoKeyOnPath).to_string(),
+            signing::SignDecision::Allow { .. } => {
+                tr::lookup_id(TrId::ReviewNoKeyOnPath).to_string()
+            }
         };
         trfmt(TrId::ReviewBlockedReason, &[&reason])
     } else {
@@ -1322,7 +1543,9 @@ fn show_verify_error(ui: &AppWindow, error: &str) {
     cb.set_verify_detail(trfmt(TrId::VerifyNotRegisteredDetail, &[error]).into());
 }
 
-fn set_status(ui: &AppWindow, msg: &str) { ui.global::<Callbacks>().set_status(msg.to_string().into()); }
+fn set_status(ui: &AppWindow, msg: &str) {
+    ui.global::<Callbacks>().set_status(msg.to_string().into());
+}
 
 fn trfmt(id: TrId, args: &[&str]) -> String {
     let mut text = tr::lookup_id(id).to_string();
@@ -1332,7 +1555,9 @@ fn trfmt(id: TrId, args: &[&str]) -> String {
     text
 }
 
-fn format_saved_to(dest: &str) -> String { format!("{} {dest}", tr::lookup_id(TrId::ExportSavedTo)) }
+fn format_saved_to(dest: &str) -> String {
+    format!("{} {dest}", tr::lookup_id(TrId::ExportSavedTo))
+}
 
 fn safe_filename(name: &str) -> String {
     let safe = name
@@ -1406,7 +1631,12 @@ fn account_path(network: Network, account: u32) -> anyhow::Result<DerivationPath
         .map_err(|e| anyhow::anyhow!("invalid account path: {e}"))
 }
 
-fn account_xpub(seed: &[u8], secp: &Secp256k1<All>, network: Network, account: u32) -> anyhow::Result<Xpub> {
+fn account_xpub(
+    seed: &[u8],
+    secp: &Secp256k1<All>,
+    network: Network,
+    account: u32,
+) -> anyhow::Result<Xpub> {
     let master = master_for_network(seed, network)?;
     let acct = account_path(network, account)?;
     Ok(Xpub::from_priv(secp, &master.derive_priv(secp, &acct)?))
@@ -1421,7 +1651,12 @@ fn key_with_origin(
 ) -> anyhow::Result<String> {
     let path = account_path(network, account)?;
     let xpub = account_xpub(seed, secp, network, account)?;
-    Ok(format!("[{}/{}]{}", fp, path.to_string().trim_start_matches("m/"), xpub))
+    Ok(format!(
+        "[{}/{}]{}",
+        fp,
+        path.to_string().trim_start_matches("m/"),
+        xpub
+    ))
 }
 
 fn set_xpub_export(ui: &AppWindow, state: &Arc<Mutex<AppState>>, network: Network) {
@@ -1431,12 +1666,14 @@ fn set_xpub_export(ui: &AppWindow, state: &Arc<Mutex<AppState>>, network: Networ
         if let Err(error) = save_network_preference(&st.data_dir, network) {
             log::warn!("could not save Liana network preference: {error}");
         }
-        key_with_origin(st.seed.as_bytes(), &st.secp, st.fp, network, LIANA_ACCOUNT).and_then(|key| {
-            let path = account_path(network, LIANA_ACCOUNT)?.to_string();
-            let fp = st.fp.to_string();
-            write_bridge_file(&st.data_dir, EXPORT_KEY_FILE, key.as_bytes());
-            Ok((key, path, fp))
-        })
+        key_with_origin(st.seed.as_bytes(), &st.secp, st.fp, network, LIANA_ACCOUNT).and_then(
+            |key| {
+                let path = account_path(network, LIANA_ACCOUNT)?.to_string();
+                let fp = st.fp.to_string();
+                write_bridge_file(&st.data_dir, EXPORT_KEY_FILE, key.as_bytes());
+                Ok((key, path, fp))
+            },
+        )
     };
     let cb = ui.global::<Callbacks>();
     cb.set_export_ok(false);
@@ -1476,7 +1713,10 @@ fn network_display(network: Network) -> &'static str {
 }
 
 fn is_public_network(network: Network) -> bool {
-    matches!(network, Network::Bitcoin | Network::Signet | Network::Testnet)
+    matches!(
+        network,
+        Network::Bitcoin | Network::Signet | Network::Testnet
+    )
 }
 
 fn network_from_label(label: &str) -> Option<Network> {
@@ -1503,8 +1743,12 @@ fn network_from_descriptor_with_hint(
     descriptor: &str,
     selected_test_network: Network,
 ) -> anyhow::Result<Network> {
-    let has_mainnet_key = ["xpub", "ypub", "zpub"].iter().any(|prefix| descriptor.contains(prefix));
-    let has_testnet_key = ["tpub", "upub", "vpub"].iter().any(|prefix| descriptor.contains(prefix));
+    let has_mainnet_key = ["xpub", "ypub", "zpub"]
+        .iter()
+        .any(|prefix| descriptor.contains(prefix));
+    let has_testnet_key = ["tpub", "upub", "vpub"]
+        .iter()
+        .any(|prefix| descriptor.contains(prefix));
 
     match (has_mainnet_key, has_testnet_key) {
         (true, false) => Ok(Network::Bitcoin),
@@ -1534,9 +1778,12 @@ fn register_policy_payload(
     if text.trim_start().starts_with('{') {
         let registration = transport::PolicyRegistration::from_json(text.as_bytes())
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let canonical = registration.canonical_descriptor().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let canonical = registration
+            .canonical_descriptor()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let network = registration.network.bitcoin(selected_test_network);
-        let mut registered = register_descriptor_for_network(&canonical, seed, secp, passport_fp, network)?;
+        let mut registered =
+            register_descriptor_for_network(&canonical, seed, secp, passport_fp, network)?;
         registered.name = registration.name.clone();
         registration.apply_to(&mut registered);
         return Ok(registered);
@@ -1566,12 +1813,19 @@ fn register_descriptor_for_network(
     let parsed = descriptor::import(text).map_err(|e| anyhow::anyhow!("{e}"))?;
     let id = parsed.checksum.clone();
     let inferred = network_from_descriptor_with_hint(&parsed.canonical, network)?;
-    if transport::PolicyNetwork::from_network(inferred)? != transport::PolicyNetwork::from_network(network)? {
+    if transport::PolicyNetwork::from_network(inferred)?
+        != transport::PolicyNetwork::from_network(network)?
+    {
         anyhow::bail!("Wallet-policy network does not match its extended keys.");
     }
-    let mut reg =
-        policy::build_registered_policy(id, "Imported policy", network_label(network), &parsed, passport_fp)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut reg = policy::build_registered_policy(
+        id,
+        "Imported policy",
+        network_label(network),
+        &parsed,
+        passport_fp,
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
     if !reg.signers.iter().any(|s| s.owned_by_passport) {
         anyhow::bail!("{}", tr::lookup_id(TrId::ImportErrorNoPassportKey));
     }
@@ -1586,8 +1840,9 @@ fn register_descriptor_for_network(
     }) {
         anyhow::bail!("A spending path cannot require more than one signature from this Passport.");
     }
-    let registration = transport::PolicyRegistration::from_descriptor(&reg.name, network, &reg.descriptor)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let registration =
+        transport::PolicyRegistration::from_descriptor(&reg.name, network, &reg.descriptor)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     registration.apply_to(&mut reg);
     Ok(reg)
 }
@@ -1600,13 +1855,16 @@ fn verify_registered_key(
 ) -> anyhow::Result<()> {
     let network = network_from_policy(policy).context("unsupported registered policy network")?;
     let master = master_for_network(seed, network)?;
-    let parsed = descriptor::import(&policy.descriptor).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let parsed =
+        descriptor::import(&policy.descriptor).map_err(|e| anyhow::anyhow!(e.to_string()))?;
     let mut owned_keys = std::collections::HashSet::new();
     let mut mismatch = None;
     parsed.descriptor.for_each_key(|key| {
         let (origin, xkey) = match key {
             liana::miniscript::DescriptorPublicKey::XPub(public) => (&public.origin, &public.xkey),
-            liana::miniscript::DescriptorPublicKey::MultiXPub(public) => (&public.origin, &public.xkey),
+            liana::miniscript::DescriptorPublicKey::MultiXPub(public) => {
+                (&public.origin, &public.xkey)
+            }
             liana::miniscript::DescriptorPublicKey::Single(_) => return true,
         };
         let Some((fingerprint, path)) = origin else {
@@ -1620,9 +1878,12 @@ fn verify_registered_key(
                 owned_keys.insert(xkey.to_string());
             }
             Ok(_) => {
-                mismatch = Some("fingerprint matches but the complete Passport xpub does not".to_owned())
+                mismatch =
+                    Some("fingerprint matches but the complete Passport xpub does not".to_owned())
             }
-            Err(error) => mismatch = Some(format!("could not derive registered Passport key: {error}")),
+            Err(error) => {
+                mismatch = Some(format!("could not derive registered Passport key: {error}"))
+            }
         }
         true
     });
@@ -1630,7 +1891,9 @@ fn verify_registered_key(
         anyhow::bail!(reason);
     }
     if owned_keys.len() != 1 {
-        anyhow::bail!("Wallet policy must contain exactly one extended key belonging to this Passport.");
+        anyhow::bail!(
+            "Wallet policy must contain exactly one extended key belonging to this Passport."
+        );
     }
     Ok(())
 }
@@ -1663,7 +1926,11 @@ fn descriptor_with_checksum(raw: &str) -> String {
 }
 
 #[cfg(test)]
-fn sample_descriptor(secp: &Secp256k1<All>, device_account_xpub: &Xpub, device_fp: Fingerprint) -> String {
+fn sample_descriptor(
+    secp: &Secp256k1<All>,
+    device_account_xpub: &Xpub,
+    device_fp: Fingerprint,
+) -> String {
     let rec_master = Xpriv::new_master(Network::Signet, &[0x22; 32]).unwrap();
     let rec_fp = rec_master.fingerprint(secp);
     let acct = DerivationPath::from_str(TEST_ACCOUNT_PATH).unwrap();
@@ -1685,13 +1952,19 @@ fn build_owner_psbt(
     use liana::miniscript::psbt::PsbtInputExt;
 
     let parsed = descriptor::import(&reg.descriptor).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let singles = parsed.descriptor.into_single_descriptors().map_err(|e| anyhow::anyhow!("{e}"))?;
-    let def = singles[0].at_derivation_index(0).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let singles = parsed
+        .descriptor
+        .into_single_descriptors()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let def = singles[0]
+        .at_derivation_index(0)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let spk = def.script_pubkey();
 
     let value = Amount::from_sat(100_000);
     let prevout = OutPoint {
-        txid: Txid::from_str("0000000000000000000000000000000000000000000000000000000000000001").unwrap(),
+        txid: Txid::from_str("0000000000000000000000000000000000000000000000000000000000000001")
+            .unwrap(),
         vout: 0,
     };
     let tx = Transaction {
@@ -1705,35 +1978,57 @@ fn build_owner_psbt(
         }],
         output: vec![TxOut {
             value: Amount::from_sat(90_000),
-            script_pubkey: ScriptBuf::from_hex("0014000000000000000000000000000000000000dead").unwrap(),
+            script_pubkey: ScriptBuf::from_hex("0014000000000000000000000000000000000000dead")
+                .unwrap(),
         }],
     };
     let mut psbt = Psbt::from_unsigned_tx(tx).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let mut input = Input { witness_utxo: Some(TxOut { value, script_pubkey: spk }), ..Default::default() };
-    input.update_with_descriptor_unchecked(&def).map_err(|e| anyhow::anyhow!("populate PSBT input: {e}"))?;
+    let mut input = Input {
+        witness_utxo: Some(TxOut {
+            value,
+            script_pubkey: spk,
+        }),
+        ..Default::default()
+    };
+    input
+        .update_with_descriptor_unchecked(&def)
+        .map_err(|e| anyhow::anyhow!("populate PSBT input: {e}"))?;
     psbt.inputs[0] = input;
     Ok(psbt)
 }
 
 fn policy_summary(p: &RegisteredPolicy) -> String {
-    let network = network_from_policy(p).map(network_display).unwrap_or(p.network.as_str());
+    let network = network_from_policy(p)
+        .map(network_display)
+        .unwrap_or(p.network.as_str());
     let recovery = p
         .paths
         .iter()
         .find(|x| matches!(x.kind, SpendPathKind::Recovery))
         .and_then(|x| x.relative_timelock_blocks);
     match recovery {
-        Some(n) => trfmt(TrId::SummaryRecoveryAfterMonths, &[network, &(n / 4380).to_string()]),
+        Some(n) => trfmt(
+            TrId::SummaryRecoveryAfterMonths,
+            &[network, &(n / 4380).to_string()],
+        ),
         None => trfmt(TrId::SummarySinglePath, &[network]),
     }
 }
 
 fn policy_is_signable(policy: &RegisteredPolicy) -> bool {
-    !policy.archived && network_from_policy(policy).map(is_public_network).unwrap_or(false)
+    !policy.archived
+        && network_from_policy(policy)
+            .map(is_public_network)
+            .unwrap_or(false)
 }
 
 fn signable_policies(store: &store::PolicyStore) -> Vec<RegisteredPolicy> {
-    store.all().iter().filter(|p| policy_is_signable(p)).cloned().collect()
+    store
+        .all()
+        .iter()
+        .filter(|p| policy_is_signable(p))
+        .cloned()
+        .collect()
 }
 
 fn load_policies(
@@ -1796,9 +2091,13 @@ fn load_policies_impl(
         if !entry.name.starts_with("policy_") || !entry.name.ends_with(".json") || entry.is_dir {
             continue;
         }
-        let Ok(text) =
-            read_text_fs_limited(&fs, &entry.name, fs::Location::AppData, MAX_POLICY_STORAGE_BYTES, "policy")
-        else {
+        let Ok(text) = read_text_fs_limited(
+            &fs,
+            &entry.name,
+            fs::Location::AppData,
+            MAX_POLICY_STORAGE_BYTES,
+            "policy",
+        ) else {
             continue;
         };
         if let Ok(reg) = store::from_json(&text) {
@@ -1826,15 +2125,17 @@ fn validate_loaded_policy(
     let network = network_from_policy(&stored).context("unsupported stored policy network")?;
     let registration = transport::PolicyRegistration::from_registered(&stored)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    let canonical =
-        registration.canonical_descriptor().map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let canonical = registration
+        .canonical_descriptor()
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     if canonical != stored.descriptor
         || registration.descriptor_checksum()? != stored.descriptor_checksum
         || registration.policy_id != stored.policy_id
     {
         anyhow::bail!("stored wallet-policy identity does not match its descriptor");
     }
-    let mut rebuilt = register_descriptor_for_network(&canonical, seed, secp, fingerprint, network)?;
+    let mut rebuilt =
+        register_descriptor_for_network(&canonical, seed, secp, fingerprint, network)?;
     rebuilt.name = registration.name;
     rebuilt.archived = stored.archived;
     for signer in &mut rebuilt.signers {
@@ -1861,11 +2162,17 @@ fn migrate_policy_metadata(policy: &mut RegisteredPolicy) {
     }
     match transport::PolicyRegistration::from_registered(policy) {
         Ok(registration) => registration.apply_to(policy),
-        Err(error) => log::warn!("could not migrate Liana policy #{}: {}", policy.descriptor_checksum, error),
+        Err(error) => log::warn!(
+            "could not migrate Liana policy #{}: {}",
+            policy.descriptor_checksum,
+            error
+        ),
     }
 }
 
-fn save_policy(dir: &Path, reg: &RegisteredPolicy) -> anyhow::Result<()> { save_policy_impl(dir, reg) }
+fn save_policy(dir: &Path, reg: &RegisteredPolicy) -> anyhow::Result<()> {
+    save_policy_impl(dir, reg)
+}
 
 #[cfg(not(keyos))]
 fn save_policy_impl(dir: &Path, reg: &RegisteredPolicy) -> anyhow::Result<()> {
@@ -1892,12 +2199,17 @@ fn save_policy_impl(_dir: &Path, reg: &RegisteredPolicy) -> anyhow::Result<()> {
             .open_file(
                 &tmp_path,
                 fs::Location::AppData,
-                fs::OpenFlags { read: true, write: true, create: true },
+                fs::OpenFlags {
+                    read: true,
+                    write: true,
+                    create: true,
+                },
             )
             .map_err(|e| anyhow::anyhow!("open {tmp_path}: {e:?}"))?;
         file.seek(SeekFrom::Start(0))?;
         file.write_all(json.as_bytes())?;
-        file.truncate().map_err(|e| anyhow::anyhow!("truncate {tmp_path}: {e:?}"))?;
+        file.truncate()
+            .map_err(|e| anyhow::anyhow!("truncate {tmp_path}: {e:?}"))?;
         file.flush()?;
     }
     match fs.rename(&tmp_path, &path, fs::Location::AppData) {
@@ -1981,12 +2293,17 @@ fn save_network_preference_impl(_dir: &Path, bytes: &[u8]) -> anyhow::Result<()>
         .open_file(
             NETWORK_PREFERENCE_FILE,
             fs::Location::AppData,
-            fs::OpenFlags { read: true, write: true, create: true },
+            fs::OpenFlags {
+                read: true,
+                write: true,
+                create: true,
+            },
         )
         .map_err(|error| anyhow::anyhow!("open network preference: {error:?}"))?;
     file.seek(SeekFrom::Start(0))?;
     file.write_all(bytes)?;
-    file.truncate().map_err(|error| anyhow::anyhow!("truncate network preference: {error:?}"))?;
+    file.truncate()
+        .map_err(|error| anyhow::anyhow!("truncate network preference: {error:?}"))?;
     file.flush()?;
     Ok(())
 }
@@ -1998,7 +2315,9 @@ fn sim_bridge_file(dir: &Path, filename: &str) -> Option<PathBuf> {
 }
 
 #[cfg(any(keyos, not(feature = "sim-bridge")))]
-fn sim_bridge_file(_dir: &Path, _filename: &str) -> Option<PathBuf> { None }
+fn sim_bridge_file(_dir: &Path, _filename: &str) -> Option<PathBuf> {
+    None
+}
 
 #[cfg(all(not(keyos), feature = "sim-bridge"))]
 fn write_bridge_file(dir: &Path, filename: &str, bytes: &[u8]) {
@@ -2024,85 +2343,50 @@ fn show_startup_error(ui: &AppWindow, msg: &str) {
     cb.set_import_error(msg.into());
 }
 
-fn scan_or_import_policy() -> anyhow::Result<String> {
-    let options = ScanQrOptions {
-        header_title: tr::lookup_id(TrId::QrScanPolicyTitle).into(),
-        header_right_icon: "close".into(),
-        button_icon: "file".into(),
-        button_text: tr::lookup_id(TrId::QrUseFile).into(),
-        ..Default::default()
-    };
-    match open_qr_scanner::<GuiPermissions>(options)
-        .map_err(|e| anyhow::anyhow!("QR scanner error: {e:?}"))?
-    {
-        Some(ScanQrResult::Ur2 { ur_type, data, .. }) => {
-            let bytes = decode_ur_bytes(&ur_type, &data, "bytes")?;
-            decode_policy_text(bytes)
+enum LauncherInput {
+    Psbt(Psbt),
+    Policy(String),
+    Address(Vec<u8>),
+}
+
+fn launcher_input(result: MatchedQrResult) -> anyhow::Result<LauncherInput> {
+    match result.scan_result {
+        ScanQrResult::Ur2 { ur_type, data, .. } if ur_type.eq_ignore_ascii_case("crypto-psbt") => {
+            let bytes = decode_ur_psbt(&ur_type, &data)?;
+            parse_psbt_bytes(&bytes).map(LauncherInput::Psbt)
         }
-        Some(ScanQrResult::Qr { data, .. }) => decode_policy_text(data),
-        Some(ScanQrResult::ButtonClicked) => import_via_picker(),
-        Some(ScanQrResult::LeftClicked | ScanQrResult::RightClicked) | None => {
-            anyhow::bail!("cancelled")
+        ScanQrResult::Ur2 { ur_type, data, .. } if ur_type.eq_ignore_ascii_case("bytes") => {
+            let bytes = decode_ur_bytes(&ur_type, &data, "bytes")?;
+            if transport::AddressVerificationRequest::from_json(&bytes).is_ok() {
+                Ok(LauncherInput::Address(bytes))
+            } else {
+                decode_policy_text(bytes).map(LauncherInput::Policy)
+            }
+        }
+        ScanQrResult::Ur2 { ur_type, .. } => {
+            anyhow::bail!("Unsupported Liana QR type: ur:{ur_type}.")
+        }
+        ScanQrResult::Qr { data, .. } => decode_policy_text(data).map(LauncherInput::Policy),
+        ScanQrResult::LeftClicked | ScanQrResult::RightClicked | ScanQrResult::ButtonClicked => {
+            anyhow::bail!("The launcher did not return QR data.")
         }
     }
 }
 
 fn decode_policy_text(bytes: Vec<u8>) -> anyhow::Result<String> {
     if bytes.is_empty() || bytes.len() > transport::MAX_DESCRIPTOR_BYTES {
-        anyhow::bail!("Wallet-policy QR is empty or exceeds {} bytes.", transport::MAX_DESCRIPTOR_BYTES);
+        anyhow::bail!(
+            "Wallet-policy QR is empty or exceeds {} bytes.",
+            transport::MAX_DESCRIPTOR_BYTES
+        );
     }
     String::from_utf8(bytes).context("wallet-policy QR is not UTF-8")
 }
 
-fn scan_psbt_or_file() -> anyhow::Result<Psbt> {
-    let options = ScanQrOptions {
-        header_title: tr::lookup_id(TrId::QrScanTransactionTitle).into(),
-        header_right_icon: "close".into(),
-        button_icon: "file".into(),
-        button_text: tr::lookup_id(TrId::QrUseFile).into(),
-        ..Default::default()
-    };
-    match open_qr_scanner::<GuiPermissions>(options)
-        .map_err(|e| anyhow::anyhow!("QR scanner error: {e:?}"))?
-    {
-        Some(ScanQrResult::Ur2 { ur_type, data, .. }) => {
-            let bytes = decode_ur_psbt(&ur_type, &data)?;
-            parse_psbt_bytes(&bytes)
-        }
-        Some(ScanQrResult::Qr { .. }) => {
-            anyhow::bail!("Transaction QR must use ur:crypto-psbt.")
-        }
-        Some(ScanQrResult::ButtonClicked) => read_psbt_via_picker(),
-        Some(ScanQrResult::LeftClicked | ScanQrResult::RightClicked) | None => {
-            anyhow::bail!("cancelled")
-        }
-    }
-}
-
-fn scan_address_verification() -> anyhow::Result<AddressScan> {
-    let options = ScanQrOptions {
-        header_title: tr::lookup_id(TrId::QrScanAddressTitle).into(),
-        header_right_icon: "close".into(),
-        ..Default::default()
-    };
-    match open_qr_scanner::<GuiPermissions>(options)
-        .map_err(|e| anyhow::anyhow!("QR scanner error: {e:?}"))?
-    {
-        Some(ScanQrResult::Ur2 { ur_type, data, .. }) => {
-            decode_ur_bytes(&ur_type, &data, "bytes").map(AddressScan::Request)
-        }
-        Some(ScanQrResult::Qr { data, .. }) => decode_bitcoin_address_qr(&data).map(AddressScan::Address),
-        Some(ScanQrResult::ButtonClicked) => {
-            anyhow::bail!("Address verification requires a QR request.")
-        }
-        Some(ScanQrResult::LeftClicked | ScanQrResult::RightClicked) | None => {
-            anyhow::bail!("cancelled")
-        }
-    }
-}
-
 fn decode_bitcoin_address_qr(data: &[u8]) -> anyhow::Result<String> {
-    let text = std::str::from_utf8(data).context("Address QR is not UTF-8")?.trim();
+    let text = std::str::from_utf8(data)
+        .context("Address QR is not UTF-8")?
+        .trim();
     let value = text
         .strip_prefix("bitcoin:")
         .or_else(|| text.strip_prefix("BITCOIN:"))
@@ -2123,13 +2407,19 @@ fn decode_ur_bytes(ur_type: &str, cbor: &[u8], expected_type: &str) -> anyhow::R
         anyhow::bail!("Expected ur:{expected_type}, received ur:{ur_type}.");
     }
     if cbor.len() > transport::MAX_REGISTRY_CBOR_BYTES {
-        anyhow::bail!("decoded registry CBOR exceeds {} bytes", transport::MAX_REGISTRY_CBOR_BYTES);
+        anyhow::bail!(
+            "decoded registry CBOR exceeds {} bytes",
+            transport::MAX_REGISTRY_CBOR_BYTES
+        );
     }
     match UrValue::from_ur(ur_type, cbor).context("invalid UR registry value")? {
         UrValue::Bytes(bytes) => {
             let bytes = bytes.to_vec();
             if bytes.len() > transport::MAX_JSON_BYTES {
-                anyhow::bail!("decoded JSON envelope exceeds {} bytes", transport::MAX_JSON_BYTES);
+                anyhow::bail!(
+                    "decoded JSON envelope exceeds {} bytes",
+                    transport::MAX_JSON_BYTES
+                );
             }
             Ok(bytes)
         }
@@ -2142,7 +2432,10 @@ fn decode_ur_psbt(ur_type: &str, cbor: &[u8]) -> anyhow::Result<Vec<u8>> {
         anyhow::bail!("Expected ur:crypto-psbt, received ur:{ur_type}.");
     }
     if cbor.len() > transport::MAX_REGISTRY_CBOR_BYTES {
-        anyhow::bail!("decoded registry CBOR exceeds {} bytes", transport::MAX_REGISTRY_CBOR_BYTES);
+        anyhow::bail!(
+            "decoded registry CBOR exceeds {} bytes",
+            transport::MAX_REGISTRY_CBOR_BYTES
+        );
     }
     match UrValue::from_ur(ur_type, cbor).context("invalid crypto-psbt registry value")? {
         UrValue::Psbt(bytes) => Ok(bytes.to_vec()),
@@ -2152,7 +2445,10 @@ fn decode_ur_psbt(ur_type: &str, cbor: &[u8]) -> anyhow::Result<Vec<u8>> {
 
 fn registry_bytes_cbor(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
     if bytes.len() > transport::MAX_REGISTRY_CBOR_BYTES {
-        anyhow::bail!("QR payload exceeds {} bytes. Use a file instead.", transport::MAX_REGISTRY_CBOR_BYTES);
+        anyhow::bail!(
+            "QR payload exceeds {} bytes. Use a file instead.",
+            transport::MAX_REGISTRY_CBOR_BYTES
+        );
     }
     let encoded = minicbor::to_vec(minicbor::bytes::ByteVec::from(bytes.to_vec()))
         .map_err(|e| anyhow::anyhow!("encode UR registry bytes: {e}"))?;
@@ -2168,7 +2464,10 @@ fn registry_bytes_cbor(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
 fn read_bytes_path_limited(path: &Path, max_bytes: u64, label: &str) -> anyhow::Result<Vec<u8>> {
     let meta = std::fs::metadata(path)?;
     if meta.len() > max_bytes {
-        anyhow::bail!("The {label} file is {} bytes. Maximum size: {max_bytes} bytes.", meta.len());
+        anyhow::bail!(
+            "The {label} file is {} bytes. Maximum size: {max_bytes} bytes.",
+            meta.len()
+        );
     }
     let file = std::fs::File::open(path)?;
     let mut bytes = Vec::with_capacity(meta.len() as usize);
@@ -2191,21 +2490,37 @@ fn read_bytes_fs_limited(
     max_bytes: u64,
     label: &str,
 ) -> anyhow::Result<Vec<u8>> {
-    let meta = filesystem.metadata(path, location).map_err(|e| anyhow::anyhow!("metadata {path}: {e:?}"))?;
+    let meta = filesystem
+        .metadata(path, location)
+        .map_err(|e| anyhow::anyhow!("metadata {path}: {e:?}"))?;
     if meta.size > max_bytes {
-        anyhow::bail!("The {label} file is {} bytes. Maximum size: {max_bytes} bytes.", meta.size);
+        anyhow::bail!(
+            "The {label} file is {} bytes. Maximum size: {max_bytes} bytes.",
+            meta.size
+        );
     }
     let file = filesystem
-        .open_file(path, location, fs::OpenFlags { read: true, write: false, create: false })
+        .open_file(
+            path,
+            location,
+            fs::OpenFlags {
+                read: true,
+                write: false,
+                create: false,
+            },
+        )
         .map_err(|e| anyhow::anyhow!("open {path}: {e:?}"))?;
     let mut bytes = Vec::with_capacity(meta.size as usize);
-    file.take(max_bytes + 1).read_to_end(&mut bytes).map_err(|e| anyhow::anyhow!("read {path}: {e:?}"))?;
+    file.take(max_bytes + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| anyhow::anyhow!("read {path}: {e:?}"))?;
     if bytes.len() as u64 > max_bytes {
         anyhow::bail!("The {label} file is too large. Maximum size: {max_bytes} bytes.");
     }
     Ok(bytes)
 }
 
+#[cfg(keyos)]
 fn read_text_fs_limited(
     filesystem: &FileSystem,
     path: &str,
@@ -2213,8 +2528,10 @@ fn read_text_fs_limited(
     max_bytes: u64,
     label: &str,
 ) -> anyhow::Result<String> {
-    String::from_utf8(read_bytes_fs_limited(filesystem, path, location, max_bytes, label)?)
-        .map_err(|_| anyhow::anyhow!("The {label} file is not valid UTF-8 text."))
+    String::from_utf8(read_bytes_fs_limited(
+        filesystem, path, location, max_bytes, label,
+    )?)
+    .map_err(|_| anyhow::anyhow!("The {label} file is not valid UTF-8 text."))
 }
 
 fn derive_policy_address(
@@ -2227,9 +2544,13 @@ fn derive_policy_address(
         anyhow::bail!("Address derivation is outside the supported range.");
     }
     let parsed = descriptor::import(descriptor_str).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let singles = parsed.descriptor.into_single_descriptors().map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let descriptor =
-        singles.get(branch as usize).context("wallet policy does not contain the requested branch")?;
+    let singles = parsed
+        .descriptor
+        .into_single_descriptors()
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let descriptor = singles
+        .get(branch as usize)
+        .context("wallet policy does not contain the requested branch")?;
     descriptor
         .at_derivation_index(index)
         .map_err(|e| anyhow::anyhow!(e.to_string()))?
@@ -2254,7 +2575,8 @@ fn find_registered_address(
             && policy_is_signable(policy)
     }) {
         saw_policy = true;
-        let network = network_from_policy(policy).context("wallet policy network is unsupported")?;
+        let network =
+            network_from_policy(policy).context("wallet policy network is unsupported")?;
         let checked = match Address::from_str(scanned_address)
             .map_err(|_| anyhow::anyhow!("The scanned code is not a Bitcoin address."))?
             .require_network(network)
@@ -2267,9 +2589,12 @@ fn find_registered_address(
             Err(_) => anyhow::bail!("The address is for a different Bitcoin network."),
         };
         verify_registered_key(policy, seed, secp, passport_fp)?;
-        let parsed = descriptor::import(&policy.descriptor).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let branches =
-            parsed.descriptor.into_single_descriptors().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let parsed =
+            descriptor::import(&policy.descriptor).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let branches = parsed
+            .descriptor
+            .into_single_descriptors()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         for branch in 0..=1u32 {
             let descriptor = branches
                 .get(branch as usize)
@@ -2283,7 +2608,9 @@ fn find_registered_address(
                     .to_string();
                 if derived == checked {
                     if matched.is_some() {
-                        anyhow::bail!("The address matches more than one registered wallet policy.");
+                        anyhow::bail!(
+                            "The address matches more than one registered wallet policy."
+                        );
                     }
                     matched = Some((policy.clone(), branch, index, checked.clone()));
                 }
@@ -2339,24 +2666,53 @@ fn read_psbt_file(path: &Path) -> anyhow::Result<Psbt> {
     parse_psbt_bytes(&read_bytes_path_limited(path, MAX_PSBT_BYTES, "PSBT")?)
 }
 
-/// Open the file picker (any `.psbt` on USB / Airlock / internal), read it, and
-/// parse the PSBT. This is the device path for loading a transaction to sign.
-fn read_psbt_via_picker() -> anyhow::Result<Psbt> {
-    let options = SelectFileOptions::default()
-        .with_allowed_locations(AllowedLocations::All)
-        .with_allowed_extensions(AllowedExtensions::specific(["psbt"]));
-    let result =
-        select_file::<GuiPermissions>(options).map_err(|e| anyhow::anyhow!("picker error: {e:?}"))?;
-    let Some(result) = result else {
-        anyhow::bail!("cancelled");
-    };
-    let Some((path, loc)) = result.files().first().cloned() else {
-        anyhow::bail!("No file selected.");
-    };
-    let filesystem = FileSystem::default();
-    let location = map_location(loc);
-    let bytes = read_bytes_fs_limited(&filesystem, &path, location, MAX_PSBT_BYTES, "PSBT")?;
+fn read_psbt_exchange_file() -> anyhow::Result<Psbt> {
+    let bytes = read_exchange_file(&[UNSIGNED_PSBT_FILE], MAX_PSBT_BYTES, "PSBT")?;
     parse_psbt_bytes(&bytes)
+}
+
+fn import_policy_exchange_file() -> anyhow::Result<String> {
+    let bytes = read_exchange_file(
+        &[
+            IMPORT_DESCRIPTOR_FILE,
+            "wallet-policy.json",
+            "wallet-policy.txt",
+        ],
+        MAX_DESCRIPTOR_BYTES,
+        "wallet policy",
+    )?;
+    decode_policy_text(bytes)
+}
+
+fn read_address_exchange_file() -> anyhow::Result<AddressScan> {
+    let bytes = read_exchange_file(
+        &[VERIFY_ADDRESS_FILE, "address-request.json"],
+        transport::MAX_JSON_BYTES as u64,
+        "address request",
+    )?;
+    if transport::AddressVerificationRequest::from_json(&bytes).is_ok() {
+        Ok(AddressScan::Request(bytes))
+    } else {
+        decode_bitcoin_address_qr(&bytes).map(AddressScan::Address)
+    }
+}
+
+fn read_exchange_file(filenames: &[&str], max_bytes: u64, label: &str) -> anyhow::Result<Vec<u8>> {
+    let filesystem = FileSystem::default();
+    for location in [fs::Location::Airlock, fs::Location::Usb, fs::Location::User] {
+        for filename in filenames {
+            for path in [format!("{EXPORT_DIR}/{filename}"), (*filename).to_owned()] {
+                if filesystem.metadata(&path, location).is_err() {
+                    continue;
+                }
+                return read_bytes_fs_limited(&filesystem, &path, location, max_bytes, label);
+            }
+        }
+    }
+    anyhow::bail!(
+        "No {label} file found. Scan it from the Passport launcher, or place {} in the liana folder on removable storage.",
+        filenames.first().copied().unwrap_or("the expected file")
+    )
 }
 
 /// Open the file-browser picker (directory-selection) so the user chooses where
@@ -2376,7 +2732,12 @@ fn read_psbt_via_picker() -> anyhow::Result<Psbt> {
 /// The directory-entry flush on close is the critical step (see SFT-7122): in
 /// rust-fatfs the FAT and data bytes hit the block cache during the write, but the
 /// directory entry only persists on `File::flush` / close.
-fn write_export(filename: &str, bytes: &[u8], location: fs::Location, dir: &str) -> anyhow::Result<String> {
+fn write_export(
+    filename: &str,
+    bytes: &[u8],
+    location: fs::Location,
+    dir: &str,
+) -> anyhow::Result<String> {
     use std::io::Write;
     let filesystem = FileSystem::default();
     let directory = filesystem.create_dir(dir, location).map_err(|e| {
@@ -2393,12 +2754,21 @@ fn write_export(filename: &str, bytes: &[u8], location: fs::Location, dir: &str)
             anyhow::anyhow!("open {dir}: {e:?}")
         }
     })?;
-    let unique =
-        directory.pick_next_filename(filename, None).map_err(|e| anyhow::anyhow!("pick filename: {e:?}"))?;
+    let unique = directory
+        .pick_next_filename(filename, None)
+        .map_err(|e| anyhow::anyhow!("pick filename: {e:?}"))?;
     let path = format!("{dir}/{unique}");
     {
         let mut file = filesystem
-            .open_file(path.clone(), location, fs::OpenFlags { read: false, write: true, create: true })
+            .open_file(
+                path.clone(),
+                location,
+                fs::OpenFlags {
+                    read: false,
+                    write: true,
+                    create: true,
+                },
+            )
             .map_err(|e| anyhow::anyhow!("open {path}: {e:?}"))?;
         let mut written = 0usize;
         while written < bytes.len() {
@@ -2412,30 +2782,24 @@ fn write_export(filename: &str, bytes: &[u8], location: fs::Location, dir: &str)
             written += n;
         }
         // Commit the directory entry (NOT done by FileSystem::flush alone).
-        file.flush().map_err(|e| anyhow::anyhow!("flush {path}: {e:?}"))?;
+        file.flush()
+            .map_err(|e| anyhow::anyhow!("flush {path}: {e:?}"))?;
     } // drop file -> CloseFile (re-commits the directory entry)
     drop(directory); // CloseDir
     Ok(format!("{}{}", loc_label(location), path))
 }
 
-/// Open the folder picker and write `filename` into the chosen folder/location
-/// (SD, USB, internal, or Airlock), using the flush-before-close sequence above.
-fn export_via_picker(filename: &str, bytes: &[u8]) -> anyhow::Result<String> {
-    let options = SelectFileOptions::default()
-        .with_dir_selection_mode(true)
-        .with_allowed_locations(AllowedLocations::All);
-    let result =
-        select_file::<GuiPermissions>(options).map_err(|e| anyhow::anyhow!("picker error: {e:?}"))?;
-    let Some(result) = result else {
-        anyhow::bail!("cancelled");
-    };
-    let Some((dir, loc)) = result.files().first().cloned() else {
-        anyhow::bail!("No folder selected.");
-    };
-    let dir = dir.trim_end_matches('/').to_string();
-    // Picking a location root gives an empty path; tuck files into a `liana/` subdir.
-    let dir = if dir.is_empty() { EXPORT_DIR.to_string() } else { dir };
-    write_export(filename, bytes, map_location(loc), &dir)
+/// Write to the first public exchange location currently available. Airlock is
+/// preferred, followed by removable storage and the app's user-storage grant.
+fn export_exchange_file(filename: &str, bytes: &[u8]) -> anyhow::Result<String> {
+    let mut last_error = None;
+    for location in [fs::Location::Airlock, fs::Location::Usb, fs::Location::User] {
+        match write_export(filename, bytes, location, EXPORT_DIR) {
+            Ok(destination) => return Ok(destination),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No writable exchange storage is available.")))
 }
 
 fn loc_label(loc: fs::Location) -> &'static str {
@@ -2444,30 +2808,6 @@ fn loc_label(loc: fs::Location) -> &'static str {
         fs::Location::Airlock => "airlock:/",
         fs::Location::User => "user:/",
         _ => "",
-    }
-}
-
-/// Open the file picker (file-selection mode), read the chosen file, and return
-/// its text contents. Used to import a Liana descriptor.
-fn import_via_picker() -> anyhow::Result<String> {
-    let options = SelectFileOptions::default().with_allowed_locations(AllowedLocations::All);
-    let result =
-        select_file::<GuiPermissions>(options).map_err(|e| anyhow::anyhow!("picker error: {e:?}"))?;
-    let Some(result) = result else {
-        anyhow::bail!("cancelled");
-    };
-    let Some((path, loc)) = result.files().first().cloned() else {
-        anyhow::bail!("No file selected.");
-    };
-    let filesystem = FileSystem::default();
-    read_text_fs_limited(&filesystem, &path, map_location(loc), MAX_DESCRIPTOR_BYTES, "descriptor")
-}
-
-fn map_location(loc: PickLocation) -> fs::Location {
-    match loc {
-        PickLocation::Internal => fs::Location::User,
-        PickLocation::Airlock => fs::Location::Airlock,
-        PickLocation::External => fs::Location::Usb,
     }
 }
 
@@ -2523,13 +2863,23 @@ mod tests {
     fn real_liana_descriptor_parses_and_matches_checksum() {
         const REAL: &str = "wsh(or_d(pk([22663c8a/48'/1'/0'/2']tpubDDz15PcqAurpydRu3ZD7EB9nGRFEttDcbge8sPTqBo2fGXQkdoLjwAkoHjKFkqBFpkrZ8dS6DSDB5bG5EC5XcbJ5LuTRbgtgoCugm7puBAX/<0;1>/*),and_v(v:pkh([22663c8a/48'/1'/0'/2']tpubDDz15PcqAurpydRu3ZD7EB9nGRFEttDcbge8sPTqBo2fGXQkdoLjwAkoHjKFkqBFpkrZ8dS6DSDB5bG5EC5XcbJ5LuTRbgtgoCugm7puBAX/<2;3>/*),older(52596))))#9xtyycfv";
         let parsed = descriptor::import(REAL).expect("real Liana descriptor imports");
-        assert_eq!(parsed.checksum, "9xtyycfv", "our checksum must match Liana's");
+        assert_eq!(
+            parsed.checksum, "9xtyycfv",
+            "our checksum must match Liana's"
+        );
         let fp = Fingerprint::from_str("22663c8a").unwrap();
         let reg = policy::build_registered_policy("real", "Real", "signet", &parsed, fp).unwrap();
         assert_eq!(reg.paths.len(), 2);
-        let recovery = reg.paths.iter().find(|p| matches!(p.kind, SpendPathKind::Recovery)).unwrap();
+        let recovery = reg
+            .paths
+            .iter()
+            .find(|p| matches!(p.kind, SpendPathKind::Recovery))
+            .unwrap();
         assert_eq!(recovery.relative_timelock_blocks, Some(52596));
-        assert!(reg.signers.iter().all(|s| s.fingerprint == "22663c8a" && s.owned_by_passport));
+        assert!(reg
+            .signers
+            .iter()
+            .all(|s| s.fingerprint == "22663c8a" && s.owned_by_passport));
     }
 
     #[test]
@@ -2557,8 +2907,13 @@ mod tests {
         let parsed = descriptor::import(&desc).expect("imports");
         let paths = policy::analyze_paths(&parsed.descriptor).expect("analyze");
         assert_eq!(paths.len(), 2);
-        assert!(paths.iter().any(|p| matches!(p.kind, SpendPathKind::Primary)));
-        let rec = paths.iter().find(|p| matches!(p.kind, SpendPathKind::Recovery)).unwrap();
+        assert!(paths
+            .iter()
+            .any(|p| matches!(p.kind, SpendPathKind::Primary)));
+        let rec = paths
+            .iter()
+            .find(|p| matches!(p.kind, SpendPathKind::Recovery))
+            .unwrap();
         assert_eq!(rec.relative_timelock_blocks, Some(RECOVERY_BLOCKS));
     }
 
@@ -2601,7 +2956,13 @@ mod tests {
         let parsed = descriptor::import(&desc).expect("decaying descriptor imports");
         let paths = policy::analyze_paths(&parsed.descriptor).expect("analyze");
         assert_eq!(paths.len(), 3, "primary + 2 recovery tiers");
-        assert_eq!(paths.iter().filter(|p| matches!(p.kind, SpendPathKind::Primary)).count(), 1);
+        assert_eq!(
+            paths
+                .iter()
+                .filter(|p| matches!(p.kind, SpendPathKind::Primary))
+                .count(),
+            1
+        );
         let mut tls: Vec<u32> = paths
             .iter()
             .filter(|p| matches!(p.kind, SpendPathKind::Recovery))
@@ -2616,7 +2977,9 @@ mod tests {
     #[test]
     fn taproot_liana_descriptor_is_rejected_for_now() {
         let (a, b) = (test_key(0x31), test_key(0x32));
-        let desc = descriptor_with_checksum(&format!("tr({a}/<0;1>/*,and_v(v:pk({b}/<0;1>/*),older(4032)))"));
+        let desc = descriptor_with_checksum(&format!(
+            "tr({a}/<0;1>/*,and_v(v:pk({b}/<0;1>/*),older(4032)))"
+        ));
         let err = import_error(&desc);
         assert!(err.contains("Taproot"), "got: {err}");
     }
@@ -2647,7 +3010,10 @@ mod tests {
         // Exactly one signer, the device, owns a key.
         let owned = reg.signers.iter().filter(|s| s.owned_by_passport).count();
         assert_eq!(owned, 1);
-        assert!(reg.signers.iter().any(|s| s.fingerprint == fp.to_string() && s.owned_by_passport));
+        assert!(reg
+            .signers
+            .iter()
+            .any(|s| s.fingerprint == fp.to_string() && s.owned_by_passport));
     }
 
     #[test]
@@ -2665,7 +3031,10 @@ mod tests {
         // The decision gate must allow, and signing must finalize.
         assert!(matches!(
             signing::decide(&m, &reg),
-            signing::SignDecision::Allow { path: SpendPathKind::Primary, .. }
+            signing::SignDecision::Allow {
+                path: SpendPathKind::Primary,
+                ..
+            }
         ));
         let master = Xpriv::new_master(Network::Signet, &[0x11; 32]).unwrap();
         let finalized =
@@ -2681,8 +3050,9 @@ mod tests {
         let reg = seed_sample(&secp, &xpub, fp).unwrap();
         let mut psbt = build_owner_psbt(&secp, &reg, &xpub, fp).unwrap();
         let parsed = descriptor::import(&reg.descriptor).unwrap();
-        let definite =
-            parsed.descriptor.into_single_descriptors().unwrap()[0].at_derivation_index(5_000).unwrap();
+        let definite = parsed.descriptor.into_single_descriptors().unwrap()[0]
+            .at_derivation_index(5_000)
+            .unwrap();
         let mut input = Input {
             witness_utxo: Some(TxOut {
                 value: Amount::from_sat(100_000),
@@ -2719,9 +3089,12 @@ mod tests {
     fn two_passport_signatures_on_one_spend_path_are_rejected() {
         let (secp, xpub, fp) = device();
         let key = format!("[{fp}/48'/1'/0'/2']{xpub}");
-        let descriptor =
-            descriptor_with_checksum(&format!("wsh(and_v(v:pk({key}/<0;1>/*),pk({key}/<2;3>/*)))"));
-        let error = register_descriptor(&descriptor, &[0x11; 32], &secp, fp).unwrap_err().to_string();
+        let descriptor = descriptor_with_checksum(&format!(
+            "wsh(and_v(v:pk({key}/<0;1>/*),pk({key}/<2;3>/*)))"
+        ));
+        let error = register_descriptor(&descriptor, &[0x11; 32], &secp, fp)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("more than one signature"), "got: {error}");
     }
 
@@ -2733,8 +3106,9 @@ mod tests {
         let reg = seed_sample(&secp, &xpub, fp).unwrap();
         let mut psbt = build_owner_psbt(&secp, &reg, &xpub, fp).unwrap();
         let parsed = descriptor::import(&reg.descriptor).unwrap();
-        let definite =
-            parsed.descriptor.into_single_descriptors().unwrap()[1].at_derivation_index(5_000).unwrap();
+        let definite = parsed.descriptor.into_single_descriptors().unwrap()[1]
+            .at_derivation_index(5_000)
+            .unwrap();
         psbt.unsigned_tx.output[0].script_pubkey = definite.script_pubkey();
         let mut output = Output::default();
         output.update_with_descriptor_unchecked(&definite).unwrap();
@@ -2752,7 +3126,10 @@ mod tests {
         let fraudulent = lpsbt::match_psbt(&psbt, &reg, fp).unwrap();
         assert!(fraudulent.matched);
         assert!(!fraudulent.passport_can_sign);
-        assert!(fraudulent.reasons.iter().any(|reason| reason.contains("output 0")));
+        assert!(fraudulent
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("output 0")));
     }
 
     #[test]
@@ -2764,11 +3141,15 @@ mod tests {
         let (secp, xpub, fp) = device();
         let descriptor = sample_descriptor(&secp, &xpub, fp);
         let registered =
-            register_descriptor_for_network(&descriptor, &[0x11; 32], &secp, fp, Network::Testnet).unwrap();
-        assert_eq!(registered.network, "testnet");
-        let envelope =
-            transport::PolicyRegistration::from_descriptor("Testnet wallet", Network::Testnet, &descriptor)
+            register_descriptor_for_network(&descriptor, &[0x11; 32], &secp, fp, Network::Testnet)
                 .unwrap();
+        assert_eq!(registered.network, "testnet");
+        let envelope = transport::PolicyRegistration::from_descriptor(
+            "Testnet wallet",
+            Network::Testnet,
+            &descriptor,
+        )
+        .unwrap();
         let restored = register_policy_payload(
             std::str::from_utf8(&transport::encode_json(&envelope).unwrap()).unwrap(),
             &[0x11; 32],
@@ -2784,13 +3165,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn launcher_handoff_accepts_plain_policy_qr() {
+        let result = MatchedQrResult {
+            scan_result: ScanQrResult::new_qr(b"wsh(pk(example))#12345678"),
+            matched_rules: Vec::new(),
+        };
+        let serialized = result.serialize();
+        let decoded = MatchedQrResult::from_slice(&serialized).expect("launcher handoff decodes");
+        match launcher_input(decoded).expect("policy handoff is accepted") {
+            LauncherInput::Policy(policy) => {
+                assert_eq!(policy, "wsh(pk(example))#12345678");
+            }
+            _ => panic!("expected a wallet-policy handoff"),
+        }
+    }
+
+    #[test]
+    fn launcher_handoff_rejects_unregistered_ur_type() {
+        let result = MatchedQrResult {
+            scan_result: ScanQrResult::new_ur2("crypto-seed".into(), b"not-a-seed"),
+            matched_rules: Vec::new(),
+        };
+        let error = match launcher_input(result) {
+            Ok(_) => panic!("unsupported UR type must be rejected"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("Unsupported Liana QR type"), "got: {error}");
+    }
+
     fn add_second_policy_input_without_passport_derivation(psbt: &mut Psbt) {
         let mut second_input = psbt.inputs[0].clone();
         second_input.bip32_derivation.clear();
         psbt.unsigned_tx.input.push(TxIn {
             previous_output: OutPoint {
-                txid: Txid::from_str("0000000000000000000000000000000000000000000000000000000000000002")
-                    .unwrap(),
+                txid: Txid::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000002",
+                )
+                .unwrap(),
                 vout: 0,
             },
             script_sig: ScriptBuf::new(),
@@ -2808,15 +3220,26 @@ mod tests {
         add_second_policy_input_without_passport_derivation(&mut psbt);
 
         let m = lpsbt::match_psbt(&psbt, &reg, fp).expect("match");
-        assert!(!m.matched, "incomplete derivation metadata must fail exact matching");
-        assert_eq!(m.expected_signatures, 0);
-        assert!(!m.passport_can_sign, "partial Passport derivations must block signing");
         assert!(
-            m.reasons.iter().any(|r| r.contains("missing unhardened policy derivations")),
+            !m.matched,
+            "incomplete derivation metadata must fail exact matching"
+        );
+        assert_eq!(m.expected_signatures, 0);
+        assert!(
+            !m.passport_can_sign,
+            "partial Passport derivations must block signing"
+        );
+        assert!(
+            m.reasons
+                .iter()
+                .any(|r| r.contains("missing unhardened policy derivations")),
             "{:?}",
             m.reasons
         );
-        assert!(matches!(signing::decide(&m, &reg), signing::SignDecision::Refuse(_)));
+        assert!(matches!(
+            signing::decide(&m, &reg),
+            signing::SignDecision::Refuse(_)
+        ));
     }
 
     #[test]
@@ -2827,10 +3250,19 @@ mod tests {
         psbt.unsigned_tx.output[0].value = Amount::from_sat(110_000);
 
         let m = lpsbt::match_psbt(&psbt, &reg, fp).expect("match");
-        assert!(m.matched, "the script still belongs to the registered policy");
+        assert!(
+            m.matched,
+            "the script still belongs to the registered policy"
+        );
         assert!(!m.passport_can_sign, "invalid amounts must block signing");
-        assert!(m.reasons.iter().any(|r| r.contains("outputs exceed verified inputs")));
-        assert!(matches!(signing::decide(&m, &reg), signing::SignDecision::Refuse(_)));
+        assert!(m
+            .reasons
+            .iter()
+            .any(|r| r.contains("outputs exceed verified inputs")));
+        assert!(matches!(
+            signing::decide(&m, &reg),
+            signing::SignDecision::Refuse(_)
+        ));
     }
 
     #[test]
@@ -2843,8 +3275,13 @@ mod tests {
         let psbt = build_owner_psbt(&secp, &reg, &xpub, fp).expect("psbt");
         let policies = vec![reg, duplicate];
 
-        let err = lpsbt::match_against_all(&psbt, &policies, fp).unwrap_err().to_string();
-        assert!(err.contains("more than one registered policy"), "got: {err}");
+        let err = lpsbt::match_against_all(&psbt, &policies, fp)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("more than one registered policy"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -2855,9 +3292,16 @@ mod tests {
         psbt.inputs[0].sighash_type = Some(EcdsaSighashType::Single.into());
 
         let m = lpsbt::match_psbt(&psbt, &reg, fp).expect("match");
-        assert!(m.matched, "the script still belongs to the registered policy");
+        assert!(
+            m.matched,
+            "the script still belongs to the registered policy"
+        );
         assert!(!m.passport_can_sign, "unsafe sighash must block signing");
-        assert!(m.reasons.iter().any(|r| r.contains("unsupported sighash")), "{:?}", m.reasons);
+        assert!(
+            m.reasons.iter().any(|r| r.contains("unsupported sighash")),
+            "{:?}",
+            m.reasons
+        );
     }
 
     #[test]
@@ -2868,9 +3312,21 @@ mod tests {
         psbt.inputs[0].witness_script = Some(ScriptBuf::from_hex("51").unwrap());
 
         let m = lpsbt::match_psbt(&psbt, &reg, fp).expect("match");
-        assert!(!m.matched, "witness script is part of exact policy matching");
-        assert!(!m.passport_can_sign, "mismatched witness_script must block signing");
-        assert!(m.reasons.iter().any(|r| r.contains("scripts and derivations")), "{:?}", m.reasons);
+        assert!(
+            !m.matched,
+            "witness script is part of exact policy matching"
+        );
+        assert!(
+            !m.passport_can_sign,
+            "mismatched witness_script must block signing"
+        );
+        assert!(
+            m.reasons
+                .iter()
+                .any(|r| r.contains("scripts and derivations")),
+            "{:?}",
+            m.reasons
+        );
     }
 
     #[test]
@@ -2887,9 +3343,19 @@ mod tests {
         });
 
         let m = lpsbt::match_psbt(&psbt, &reg, fp).expect("match");
-        assert!(m.matched, "the witness_utxo still belongs to the registered policy");
-        assert!(!m.passport_can_sign, "inconsistent non_witness_utxo must block signing");
-        assert!(m.reasons.iter().any(|r| r.contains("non_witness_utxo")), "{:?}", m.reasons);
+        assert!(
+            m.matched,
+            "the witness_utxo still belongs to the registered policy"
+        );
+        assert!(
+            !m.passport_can_sign,
+            "inconsistent non_witness_utxo must block signing"
+        );
+        assert!(
+            m.reasons.iter().any(|r| r.contains("non_witness_utxo")),
+            "{:?}",
+            m.reasons
+        );
     }
 
     #[test]
@@ -2901,7 +3367,10 @@ mod tests {
         psbt.unsigned_tx.input[0].sequence = Sequence::from_height(RECOVERY_BLOCKS as u16);
 
         let m = lpsbt::match_psbt(&psbt, &reg, fp).expect("match");
-        assert!(m.matched, "the input still belongs to the registered policy");
+        assert!(
+            m.matched,
+            "the input still belongs to the registered policy"
+        );
         assert!(m.passport_can_sign, "the immediate path remains valid");
         assert_eq!(m.active_path, Some(SpendPathKind::Primary));
     }
@@ -2909,15 +3378,25 @@ mod tests {
     #[test]
     fn register_descriptor_rejects_garbage() {
         let (secp, _, fp) = device();
-        assert!(register_descriptor("definitely not a descriptor", &[0x11; 32], &secp, fp).is_err());
+        assert!(
+            register_descriptor("definitely not a descriptor", &[0x11; 32], &secp, fp).is_err()
+        );
     }
 
     #[test]
     fn network_detection_rejects_mixed_extended_key_families() {
-        assert_eq!(network_from_descriptor("wsh(pk(xpubabc))").unwrap(), Network::Bitcoin);
-        assert_eq!(network_from_descriptor("wsh(pk(tpubabc))").unwrap(), Network::Signet);
+        assert_eq!(
+            network_from_descriptor("wsh(pk(xpubabc))").unwrap(),
+            Network::Bitcoin
+        );
+        assert_eq!(
+            network_from_descriptor("wsh(pk(tpubabc))").unwrap(),
+            Network::Signet
+        );
 
-        let mixed = network_from_descriptor("wsh(sortedmulti(2,xpubabc,tpubabc))").unwrap_err().to_string();
+        let mixed = network_from_descriptor("wsh(sortedmulti(2,xpubabc,tpubabc))")
+            .unwrap_err()
+            .to_string();
         assert!(mixed.contains("mixes mainnet and testnet"), "got: {mixed}");
     }
 
@@ -2926,7 +3405,9 @@ mod tests {
         let (secp, xpub, fp) = device();
         let desc = sample_descriptor(&secp, &xpub, fp);
         let wrong_fp = Fingerprint::from_str("deadbeef").unwrap();
-        let err = register_descriptor(&desc, &[0x11; 32], &secp, wrong_fp).unwrap_err().to_string();
+        let err = register_descriptor(&desc, &[0x11; 32], &secp, wrong_fp)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("belonging to this Passport"), "got: {err}");
     }
 
@@ -2934,7 +3415,11 @@ mod tests {
     fn save_then_load_roundtrips() {
         let (secp, xpub, fp) = device();
         let mut reg = seed_sample(&secp, &xpub, fp).unwrap();
-        if let Some(external) = reg.signers.iter_mut().find(|signer| !signer.owned_by_passport) {
+        if let Some(external) = reg
+            .signers
+            .iter_mut()
+            .find(|signer| !signer.owned_by_passport)
+        {
             external.name = "Family Recovery".into();
         }
         reg.archived = true; // Legacy records are reactivated now that archive is removed.
@@ -2945,13 +3430,17 @@ mod tests {
 
         save_policy(&dir, &reg).expect("save");
         let saved =
-            std::fs::read_to_string(dir.join(format!("policy_{}.json", reg.descriptor_checksum))).unwrap();
+            std::fs::read_to_string(dir.join(format!("policy_{}.json", reg.descriptor_checksum)))
+                .unwrap();
         assert!(saved.contains("\"schema_version\": 3"), "got: {saved}");
         let store = load_policies(&dir, &[0x11; 32], &secp, fp);
         assert_eq!(store.len(), 1);
         let loaded = store.find_by_checksum(&reg.descriptor_checksum).unwrap();
         assert!(!loaded.archived);
-        assert!(loaded.signers.iter().any(|signer| signer.name == "Family Recovery"));
+        assert!(loaded
+            .signers
+            .iter()
+            .any(|signer| signer.name == "Family Recovery"));
 
         let mut legacy: serde_json::Value = serde_json::from_str(&saved).unwrap();
         legacy.as_object_mut().unwrap().remove("schema_version");
@@ -2965,9 +3454,12 @@ mod tests {
     fn corrupted_stored_policy_is_quarantined() {
         let (secp, xpub, fp) = device();
         let mut reg = seed_sample(&secp, &xpub, fp).unwrap();
-        let registration =
-            transport::PolicyRegistration::from_descriptor(&reg.name, Network::Signet, &reg.descriptor)
-                .unwrap();
+        let registration = transport::PolicyRegistration::from_descriptor(
+            &reg.name,
+            Network::Signet,
+            &reg.descriptor,
+        )
+        .unwrap();
         registration.apply_to(&mut reg);
 
         let dir = std::env::temp_dir().join("liana-signer-test-corrupt-store");
@@ -3069,7 +3561,10 @@ mod tests {
         let (secp, xpub, fp) = device();
         let reg = seed_sample(&secp, &xpub, fp).unwrap();
         let summary = policy_summary(&reg);
-        assert!(summary.contains("Recovery after about 12 months"), "got: {summary}");
+        assert!(
+            summary.contains("Recovery after about 12 months"),
+            "got: {summary}"
+        );
     }
 
     #[test]
@@ -3107,7 +3602,9 @@ mod tests {
 
     #[test]
     fn plain_address_qr_rejects_non_address_data() {
-        let error = decode_bitcoin_address_qr(b"not an address").unwrap_err().to_string();
+        let error = decode_bitcoin_address_qr(b"not an address")
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("Bitcoin address QR"), "got: {error}");
     }
 
@@ -3119,7 +3616,8 @@ mod tests {
         mainnet.network = "bitcoin".into();
         let address = derive_policy_address(&signet.descriptor, 0, 3, Network::Signet).unwrap();
         let (_, branch, index, _) =
-            find_registered_address(&[mainnet, signet], "", &address, &[0x11; 32], &secp, fp).unwrap();
+            find_registered_address(&[mainnet, signet], "", &address, &[0x11; 32], &secp, fp)
+                .unwrap();
         assert_eq!((branch, index), (0, 3));
     }
 }

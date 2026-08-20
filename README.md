@@ -1,76 +1,145 @@
 # Liana Signer for Passport Prime
 
-A policy-aware [Liana](https://wizardsardine.com/liana/) Miniscript signer that runs natively on the [Foundation Passport Prime](https://foundation.xyz), built on KeyOS.
+A policy-aware [Liana](https://wizardsardine.com/liana/) Miniscript signer for
+[Foundation Passport Prime](https://foundation.xyz), built as an independent
+KeyOS application.
 
-Liana stays the wallet and builds the transaction. Passport registers the wallet's descriptor and will only ever sign a PSBT that genuinely matches a registered policy and spends through a path this device holds a key for. Verified end to end on real hardware: signed signet transactions through a Miniscript policy and broadcast them.
+Liana remains the wallet and builds the transaction. Passport registers the
+wallet policy and signs only when the PSBT matches that policy and uses a spend
+path for which this app holds a key.
 
-> The code is a KeyOS application (Rust + Slint); host and device builds require the Foundation SDK or a KeyOS workspace (see [Building](#building)).
+This repository is standalone. It does not require the private KeyOS source
+tree. A clean clone can be built, signed, packed as a `.app`, simulated, or
+sideloaded with Foundation SDK 1.0.
 
-## Screenshots
+## Features
 
-<!-- Add device photos to docs/screenshots/ and reference them here, e.g.: -->
-<!-- ![Signing review](docs/screenshots/signing-review.jpg) -->
+- **Connect to Liana**: export Passport's BIP48 key as an animated
+  `ur:crypto-account` QR or a file.
+- **Import a wallet policy**: receive Liana's versioned `ur:bytes` registration,
+  review every spend path and signer, then save it to app-scoped storage.
+- **Verify an address**: receive Liana's policy-bound request and derive the
+  address independently on Passport.
+- **Sign a transaction**: receive `ur:crypto-psbt`, match every input against the
+  registered policy, review the active path, outputs, and fee, then slide to
+  sign.
+- **Return the signed PSBT**: display `ur:crypto-psbt` or export a binary BIP174
+  `.psbt` file.
+- **Manage policies**: rename policies and signer keys, export a policy backup,
+  or permanently delete a policy behind confirmation.
 
-_Add device captures to `docs/screenshots/`._
+Mainnet is the default network. Testnet and Signet are available from the app's
+network menu. Taproot remains intentionally disabled; use a P2WSH/SegWit Liana
+wallet policy.
 
-## What it does
+## Security model
 
-- **Connect to Liana** — show the selected BIP48 account as `ur:crypto-account`, with binary-file fallback and Signet/mainnet account selection.
-- **Import policy** — scan Liana's versioned `ur:bytes` wallet-policy registration and review its spend paths and complete keys before saving it.
-- **Verify address** — answer Liana's policy-bound `ur:bytes` request with an independently derived address response.
-- **Sign** — scan `ur:crypto-psbt`, match every input against a registered policy, review outputs and the active path, then slide to sign.
-- **Return to Liana** — show the signed PSBT as `ur:crypto-psbt`, or write a binary BIP174 `.psbt` file when it is too large for QR.
-- **Manage** — archive, restore, rename, and delete policies, with destructive actions behind a dedicated confirmation screen.
+The signing gate in `src/liana/signing.rs` refuses to sign unless:
 
-## Spend paths
+1. every PSBT input matches a registered policy,
+2. the active spend path can be determined from the transaction, and
+3. the app owns a key on a path that is currently spendable.
 
-Understands and explains, in plain language, single-key, recovery (timelocked `older(n)`), and decaying multi-tier P2WSH policies. Taproot support is shelved until the signing flow is fully fixture-tested end to end.
+The app requests only the KeyOS **app seed** (`GetAppSeed`). It cannot request or
+access Passport's master seed. Key derivation and persistent storage are scoped
+to this app ID. The manifest uses public SDK permissions only.
 
-## How signing stays safe
+## Requirements
 
-The signing gate (`src/liana/signing.rs`) refuses unless:
+- Passport Prime running the KeyOS 1.4 beta or a compatible newer release.
+- Foundation SDK 1.0 or newer.
+- Apple Silicon macOS or Linux x86_64.
 
-1. the PSBT matches a registered policy (every input's scriptPubKey derives from it),
-2. the active spend path can be determined (inferred from the input nSequence), and
-3. Passport owns a key on a path that is currently spendable (the primary path always; a recovery tier only once its timelock has matured).
+Install the SDK and verify the host:
 
-Matching derives candidate scriptPubKeys per descriptor path and compares them against the PSBT inputs (`src/liana/psbt.rs`). Nothing is signed on a generic or unmatched path.
+```bash
+curl -fsSL https://foundation.xyz/sdk/install.sh | sh
+foundation doctor
+```
+
+## Build and install
+
+Clone this repository, then run all commands from its root:
+
+```bash
+git clone https://github.com/BitcoinQnA/passport-liana-signer.git
+cd passport-liana-signer
+```
+
+Create a local publisher identity once. Use your own publisher details; the
+private signing key remains under `~/.foundation/signing/` and must never be
+committed:
+
+```bash
+foundation cert gen liana-signer-local \
+  --publisher-name "Your Name" \
+  --contact-email "you@example.com" \
+  --support-url "https://example.com"
+```
+
+Build, sign, and create the installable archive:
+
+```bash
+foundation pack --release
+```
+
+The archive is written to `target/keyos/gui-app-liana-signer.app`. Copy it to a
+USB drive or Airlock, then install it on Passport from **Settings > Apps**. This
+archive workflow does not require Developer Mode or USB debug after its
+publisher certificate has been trusted on the device.
+
+For a self-signed development publisher, unlock the Prime, enable USB debug,
+connect it, and approve the certificate once:
+
+```bash
+foundation cert install liana-signer-local
+```
+
+You can then build and launch directly over USB during development:
+
+```bash
+foundation sideload --release
+```
+
+Run the hosted simulator with:
+
+```bash
+foundation sim
+```
+
+See [SDK-SETUP.md](SDK-SETUP.md) for certificate trust, generated files, and
+troubleshooting. See [SIGNET-TEST.md](SIGNET-TEST.md) for an end-to-end Liana
+test.
 
 ## Architecture
 
-- **`src/liana/`** — the Bitcoin logic, host-testable: `descriptor` (parse/import), `policy` (build the registered policy + spend-path model), `psbt` (match + active-path), `signing` (the gate + sign), `store` (persist policies). Uses rust-miniscript + rust-bitcoin via `ngwallet`.
-- **`src/main.rs`** — the KeyOS/Slint app shell: callbacks, the export/import file flows, and device key wiring (app seed to master `Xpriv` to BIP48 account).
-- **`ui/`** — Slint pages under `ui/pages/*`; routing in `ui/gen/*` is generated by `build.rs` from each page's `props.slint`.
-- **`i18n/en.json`** — user-facing strings.
+- `src/liana/`: host-testable descriptor, policy, PSBT matching, signing, and
+  persistence logic.
+- `src/main.rs`: KeyOS app shell, public navigation handoff, app-seed key
+  derivation, and USB/Airlock file exchange.
+- `ui/`: Slint UI and SDK UI2 compatibility components.
+- `app-config.toml`: app identity, version, QR match rules, theme, and public
+  permissions.
+- `i18n/en.json`: user-facing copy.
 
-## Build & run
+The SDK creates the ignored `.foundation-sdk/` mapping and generated resource
+links during a build. `manifest.toml` is also generated from `app-config.toml`;
+the app config is the source of truth.
 
-Heads up: **a bare clone does not compile.** This is a KeyOS application and needs a KeyOS workspace around it (it depends on KeyOS crates such as `slint_keyos_platform`, `gui_permissions`, and `ngwallet`, which are not vendored here). You can still read the code and run the host unit tests, but building the app for the simulator or the device requires a workspace.
+## Development
 
-Working on this with an AI agent (Codex, Cursor, or similar)? Start with **[`AGENTS.md`](AGENTS.md)** — it gives your agent the prerequisites, the exact build/run/flash commands, and the known gotchas.
+After the SDK has prepared the project mapping, run the host tests with:
 
-The short version:
+```bash
+cargo test
+```
 
-1. **Get a KeyOS workspace.** The intended path is the **Foundation SDK**:
-   ```bash
-   curl -fsSL https://foundation.xyz/sdk/install.sh | sh   # Apple Silicon macOS or Linux x86_64
-   ```
-   SDK 0.4.0 supports simulator, signed bundle, and USB-debug sideload workflows; see [`SDK-SETUP.md`](SDK-SETUP.md). Alternatively, place the app at `apps/gui-app-liana-signer/` in a KeyOS checkout.
-2. **Run it.** From the workspace root:
-   ```bash
-   cargo test -p gui-app-liana-signer     # host unit tests
-   cargo xtask run --hosted               # the simulator
-   ```
-3. **Device build/flash** and the end-to-end **[signet test with Liana](SIGNET-TEST.md)** are covered in `AGENTS.md` and `SDK-SETUP.md`.
-
-For a built-in firmware integration, also add the app ID to the KeyOS 1.4 launcher's `KNOWN_APPS` list and add its localized `main.liana` label. Built-in apps are intentionally hidden unless allowlisted. SDK-sideloaded apps are discovered dynamically and do not need that source change. In both cases, KeyOS stages the launcher icon from the SDK-standard `resources/icon.svg` path.
-
-## Status
-
-The policy/signing logic and Passport/Liana QR protocol are regression-tested against the Passport Core and Liana desktop fixtures. P2WSH Signet and mainnet are supported; Taproot remains intentionally disabled pending an `ngwallet` signing implementation and full fixtures.
+The release package has also been validated with `foundation build --release`
+and `foundation pack --release` against SDK 1.0.0.
 
 ## License
 
-GPL-3.0-or-later. Copyright Foundation Devices, Inc. Source files carry SPDX headers.
+GPL-3.0-or-later. Copyright Foundation Devices, Inc. Source files carry SPDX
+headers.
 <!-- SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz> -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->

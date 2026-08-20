@@ -51,3 +51,10 @@
     "GetDebugTouch",
     "SubscribeDebugTouch",
 ]
+
+[navigable]
+"os/gui-server" = [
+    "GetPendingNavRequest",
+    "FinishResponse",
+    "NavigationCancel",
+]

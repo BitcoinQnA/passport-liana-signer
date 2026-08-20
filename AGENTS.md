@@ -1,70 +1,92 @@
 # AGENTS.md
 
-Guidance for an AI coding agent (Codex, Cursor, and others) helping someone build, run, and extend this project. Keep answers grounded in the files here; do not invent commands.
+Guidance for coding agents working on this repository. Keep commands and claims
+grounded in the checked-in files.
 
-## What this is
+## Project
 
-A KeyOS application: a policy-aware Liana Miniscript signer for Foundation Passport Prime. Liana desktop is the wallet and builds the PSBT; this app registers the descriptor, matches a PSBT against it, and signs only a matching PSBT on a spend path the device holds a key for. See [`README.md`](README.md) for the feature tour and [`src/liana/`](src/liana) for the Bitcoin logic.
+This is a standalone Foundation SDK application for Passport Prime: a
+policy-aware Liana Miniscript signer. Liana builds the wallet and PSBT. The app
+registers the policy and signs only a matching PSBT through a spend path for
+which its app-scoped key is authorized.
 
-## Can it be cloned and run today? (read this first)
+The repository targets Foundation SDK 1.0 and KeyOS 1.4.0 or newer. Do not place
+it inside a KeyOS checkout or add private KeyOS source dependencies.
 
-Not standalone, yet. This is a KeyOS app: it depends on KeyOS crates (`slint_keyos_platform`, `gui_permissions`, `ngwallet`, the `@ui` widget library) that are not vendored here, so `cargo build` in a bare clone will fail. It needs a **KeyOS workspace** around it. Be honest with the user about this rather than attempting a build that cannot succeed.
+## Setup
 
-Two ways to get a workspace, in order of preference:
+```bash
+curl -fsSL https://foundation.xyz/sdk/install.sh | sh
+foundation doctor
+foundation build
+```
 
-1. **Foundation SDK** (the `foundation` CLI) — the intended path. Install:
-   ```bash
-   curl -fsSL https://foundation.xyz/sdk/install.sh | sh
-   ```
-   (Supported hosts: Apple Silicon macOS and Linux x86_64. The installer verifies a GPG signature and installs to `~/.foundation/sdk/`.) SDK 0.4.0 provides `build`, `sim`, and USB-debug `sideload`; check `foundation --help` for the installed surface. See [`SDK-SETUP.md`](SDK-SETUP.md).
-2. **KeyOS source checkout** — clone the KeyOS repo and drop this app in at `apps/gui-app-liana-signer/`, register it in the workspace and `DEFAULT_APPS_NORMAL`, then add its app ID to the KeyOS 1.4 launcher's `KNOWN_APPS` list with a localized `main.liana` label. Built-in apps not on that allowlist are installed but hidden. Then use `cargo xtask`. KeyOS is Foundation's OS and is not public; this route needs access.
-
-If neither is available, the useful things an agent can still do here: read and explain the code, run the host unit tests (below), and edit the Rust/Slint sources.
+The first SDK build creates the ignored `.foundation-sdk/current` mapping and
+resource links used by Cargo and Slint. `app-config.toml` is the source of truth;
+`manifest.toml` is generated and ignored.
 
 ## Layout
 
-- `src/liana/` — host-testable Bitcoin logic: `descriptor` (parse/import), `policy` (spend-path model), `psbt` (match + active path), `signing` (the security gate + sign), `store` (persistence).
-- `src/main.rs` — the app shell: Slint callbacks, the export/import file flows, device key wiring (app seed to master `Xpriv` to a BIP48 account).
-- `ui/` — Slint UI. Pages live in `ui/pages/<name>/{props.slint,page.slint}`; `build.rs` generates the router in `ui/gen/*` from each page's `@rust-attr(route(...))`. To add a screen, add a `pages/<name>/` folder and rebuild.
-- `app-config.toml` — the SDK source of truth for identity, version, publisher, and permissions. `manifest.toml` is its compile-time compatibility output. `app-id` must be exactly 16 bytes (`0x` + 32 hex).
-- `i18n/en.json` — user-facing strings, referenced as `TR2.lookup(TrId.Xxx)` in Slint.
+- `src/liana/`: host-testable descriptor, policy, PSBT, signing, and persistence
+  logic.
+- `src/main.rs`: app shell, KeyOS callbacks, launcher QR handoff, public file
+  exchange, and app-seed key wiring.
+- `ui/`: Slint pages and local UI2 compatibility components.
+- `app-config.toml`: stable app ID, version, QR match rules, publisher, theme,
+  and public permissions.
+- `i18n/en.json`: user-facing strings.
 
 ## Commands
 
-Run these from the **KeyOS workspace root** (once the app is placed there), not from a bare clone.
+Run commands from this repository root:
 
 ```bash
-# Host unit tests for the app logic (works in a workspace; the crate name is gui-app-liana-signer)
-cargo test -p gui-app-liana-signer
-
-# Compile-check for both device (ARM/xous) and simulator, no display needed
-cargo xtask check gui-app-liana-signer
-
-# Run the hosted simulator (opens the Passport window; app appears in the dev launcher)
-cargo xtask run --hosted        # or: just sim
+cargo test
+foundation build --release
+foundation pack --release
+foundation sim
+foundation sideload --release
 ```
 
-### Device build + flash
+`foundation pack --release` creates
+`target/keyos/gui-app-liana-signer.app`. `foundation sideload` requires an
+unlocked device with USB debug enabled. A self-signed publisher must first be
+allowed with `foundation cert install <identity>`.
 
-- **macOS:** prefix xtask build commands with `AR_armv7a_unknown_xous_elf=arm-none-eabi-ar` (and `RANLIB_...=arm-none-eabi-ranlib`) or you hit a uECC/secp link failure. The full flashable image has historically needed a Linux/Nix build host for the `rfal-sys` (NFC) crate; the SDK's `foundation sideload` is the intended way to push just the app bundle over USB without a full firmware rebuild.
-- Flash is over USB via SAM-BA (`cargo xtask flash --system`). The **first flash attempt sometimes fails** with `Status after writing ... was 3` — just re-run it, it usually succeeds on the second try (not deterministic, no reseating needed).
+Never use `cargo xtask`, edit a KeyOS workspace, or flash a full firmware image
+for this app.
 
-## Simulator + real Liana test
+## Security constraints
 
-To exercise signing against Liana desktop on the same machine, build the hosted app with the `dev-seed` and `sim-bridge` Cargo features and follow [`SIGNET-TEST.md`](SIGNET-TEST.md). Key point: build the Liana wallet with the simulator's own exported key (shown on the Export Xpub screen), or signing is correctly blocked. Use a **P2WSH / SegWit** inheritance template; Taproot is shelved for now.
+- Never weaken the gate in `src/liana/signing.rs`. It must reject unmatched
+  policies, unknown active paths, keys the app does not own, and immature
+  timelocked paths.
+- The only seed permission is `GetAppSeed`. Never add `GetSeed` or other
+  elevated seed access. Third-party apps must remain isolated from the Passport
+  master seed.
+- Scanner input arrives through the public launcher navigation handoff and the
+  QR match rules in `app-config.toml`. Do not reintroduce privileged scanner or
+  file-picker APIs.
+- File exports must call file-level `Flush` before `CloseFile`. Do not request
+  or call filesystem-wide `FlushFs`.
+- Preserve the stable 16-byte `app-id`; changing it changes the app seed and
+  storage identity.
 
-## Conventions and gotchas
+## Conventions
 
-- **Signing is gated** (`src/liana/signing.rs`): never loosen it to sign an unmatched policy or a path the device does not own. That gate is the point of the app.
-- **File exports** write through the picker and must call file-level `Flush` before `CloseFile` (`write_export` in `src/main.rs`) so the FAT directory entry commits. Do not add `FileSystem::flush`: its `FlushFs` permission is Foundation-only in current KeyOS and public SDK apps are denied it.
-- When testing exports to a microSD on macOS, disable Spotlight on the card (`touch /Volumes/<CARD>/.metadata_never_index`) — Spotlight indexing can corrupt a removable FAT card and produce misleading results.
-- No em dashes in user-facing copy.
-- License is GPL-3.0-or-later; keep the SPDX headers on new source files.
+- Prefer existing code and UI patterns.
+- Add user-facing strings to `i18n/en.json` and reference them through the Slint
+  translation API.
+- Do not use em dashes in user-facing copy.
+- Keep SPDX headers on new source files. The project is GPL-3.0-or-later.
+- Do not commit `.foundation-sdk`, generated SDK links, `manifest.toml`, build
+  artifacts, signing keys, PSBTs, or wallet policy test data.
 
-## Good first tasks for an agent
+## Testing changes
 
-- Read `src/liana/{signing,psbt,policy}.rs` and summarize the security model before changing anything.
-- Add a UI string: add it to `i18n/en.json` and reference it via `TR2.lookup`.
-- Add a page: create `ui/pages/<name>/{props.slint,page.slint}` and let `build.rs` regenerate the route.
+Run host tests for Bitcoin logic and callbacks, then run a release SDK build.
+For UI or flow changes, launch `foundation sim` and exercise every affected
+screen. For transaction behavior, follow `SIGNET-TEST.md` with a P2WSH/SegWit
+Liana policy. Taproot remains intentionally disabled.
 <!-- SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz> -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->

@@ -1,0 +1,4 @@
+[env]
+CC_armv7a_unknown_xous_elf = "arm-none-eabi-gcc"
+AR_armv7a_unknown_xous_elf = "arm-none-eabi-ar"
+RANLIB_armv7a_unknown_xous_elf = "arm-none-eabi-ranlib"

@@ -3,13 +3,16 @@
 
 import { Router } from "gen/router.slint";
 import { Callbacks } from "callbacks.slint";
-import { BaseWindow } from "@ui/widgets.slint";
-import { CurrentTheme, Images, Utils } from "@ui/theme.slint";
-import { TR } from "@ui/i18n/i18n.slint";
+import { CurrentTheme, Images, Utils, Theme, UISize } from "compat/theme.slint";
+import { TR } from "compat/i18n.slint";
 
-export component AppWindow inherits BaseWindow {
+export component AppWindow inherits Window {
+    title: "Liana Signer";
+    preferred-width: UISize.screen-width;
+    preferred-height: UISize.screen-height;
+    background: Theme.palette-background;
     Router { }
 }
 
 export * from "gen/exports.slint";
-export { Callbacks, CurrentTheme, Images, Utils, TR }
+export { Callbacks, CurrentTheme, Images, Utils, TR, Theme }

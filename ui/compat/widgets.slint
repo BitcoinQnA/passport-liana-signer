@@ -1,0 +1,388 @@
+// Thin compatibility layouts for the former in-tree widget names. Interactive
+// controls delegate to Foundation UI2; typography and geometry use UI2 tokens.
+import { Importance, Size, IconSize, UISize, Palette, Utils, Images, FontSize } from "theme.slint";
+import { Theme, ButtonVariant, ControlSize } from "@ui/theme.slint";
+import { Button as UiButton } from "@ui/button.slint";
+import { Input as UiInput, InputVariant } from "@ui/input.slint";
+import { Spinner as UiSpinner } from "@ui/spinner.slint";
+
+component CompatText inherits Text {
+    color: Palette.content-primary;
+    wrap: word-wrap;
+    vertical-alignment: top;
+    horizontal-alignment: left;
+    font-family: Theme.font-primary;
+    in property <bool> bold: false;
+    font-weight: bold ? Theme.font-weight-semibold : Theme.font-weight-normal;
+}
+export component TextSm inherits CompatText { font-size: Theme.font-size-subtitle; }
+export component TextMd inherits CompatText { font-size: Theme.font-size-body; }
+export component TextLg inherits CompatText { font-size: Theme.font-size-sm; }
+export component HeadingMd inherits CompatText { font-size: Theme.font-size-title; font-weight: Theme.font-weight-semibold; }
+export component HeadingLg inherits CompatText { font-size: Theme.font-size-title + Theme.spacing-sm; font-weight: Theme.font-weight-semibold; }
+export component HeadingXl inherits CompatText { font-size: Theme.font-size-title + Theme.spacing-md; font-weight: Theme.font-weight-semibold; }
+
+export component Icon inherits Image {
+    in property <string> name: "check";
+    in property <length> size: IconSize.px24;
+    in property <brush> color <=> self.colorize;
+    source: Images.icon(root.name, root.size);
+    colorize: Palette.content-primary;
+    width: root.size;
+    height: root.size;
+}
+
+export component IconButton inherits Rectangle {
+    in property <string> id;
+    in property <Importance> importance: Importance.normal;
+    in property <bool> enabled: true;
+    in property <string> icon;
+    in property <length> size: Size.sz16;
+    in property <length> icon-size: Math.min(size, Size.sz8);
+    in property <float> touch-factor: 2.5;
+    in property <bool> recolorable: true;
+    in property <bool> force-pressed: false;
+    in property <brush> icon-color: importance == Importance.negative ? Palette.content-negative : Palette.content-primary;
+    callback clicked(string);
+    width: size;
+    height: size;
+    border-radius: size / 2;
+    background: touch.pressed || force-pressed ? Palette.background-disabled : Palette.transparent;
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        name: root.icon;
+        size: root.icon-size;
+        color: root.icon-color;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(root.id); }
+    }
+}
+
+export component BasePage inherits Rectangle {
+    x: 0px;
+    y: UISize.control-center-status-bar-height;
+    width: UISize.screen-width;
+    height: UISize.app-window-height;
+}
+
+export component PageBody inherits VerticalLayout {
+    alignment: space-between;
+    in property <length> p-x: Size.sz6;
+    in property <length> p-y: Size.sz6;
+    padding-left: p-x;
+    padding-right: p-x;
+    padding-top: p-y;
+    padding-bottom: p-y;
+}
+export component ContentSection inherits VerticalLayout { alignment: start; spacing: Size.sz6; }
+export component ButtonSection inherits VerticalLayout {
+    alignment: end;
+    spacing: Size.sz4;
+    padding-bottom: Size.sz2;
+    padding-left: Size.sz2;
+    padding-right: Size.sz2;
+}
+
+export component ScrollBody inherits Rectangle {
+    in-out property <length> viewport-x <=> flickable.viewport-x;
+    in-out property <length> viewport-y <=> flickable.viewport-y;
+    in-out property <length> viewport-width <=> flickable.viewport-width;
+    in-out property <length> viewport-height <=> flickable.viewport-height;
+    out property <bool> at-top: flickable.viewport-y == 0px;
+    out property <bool> at-bottom: -flickable.viewport-y + flickable.height >= flickable.viewport-height;
+    in property <length> p-x: Size.sz6;
+    in property <length> p-y: Size.sz6;
+    PageBody {
+        p-x: root.p-x; p-y: root.p-y;
+        flickable := Flickable { @children }
+    }
+}
+
+export component AppHeader inherits Rectangle {
+    in property <string> title;
+    in property <brush> title-color: Palette.content-primary;
+    in property <length> side-padding: Size.sz4;
+    height: Theme.control-size-lg;
+    HeadingMd {
+        text: root.title; color: root.title-color; horizontal-alignment: center;
+        vertical-alignment: center; width: parent.width; height: parent.height;
+        overflow: elide; wrap: no-wrap;
+    }
+    @children
+}
+
+export component Button inherits Rectangle {
+    in property <string> id;
+    in property <string> label: "Button";
+    in property <Importance> importance;
+    in property <bool> enabled: true;
+    in property <string> icon;
+    in property <bool> loading: false;
+    in property <bool> force-pressed: false;
+    callback clicked(string);
+    height: Theme.control-size-md + Theme.spacing-xs;
+
+    UiButton {
+        width: parent.width;
+        height: parent.height;
+        text: root.label;
+        size: ControlSize.md;
+        full-width: true;
+        disabled: !root.enabled;
+        loading: root.loading;
+        force-pressed: root.force-pressed;
+        variant: root.importance == Importance.primary ? ButtonVariant.primary
+            : root.importance == Importance.negative ? ButtonVariant.danger
+            : root.importance == Importance.tertiary ? ButtonVariant.tertiary
+            : root.importance == Importance.secondary ? ButtonVariant.secondary
+            : ButtonVariant.ghost;
+        clicked => { root.clicked(root.id); }
+    }
+}
+
+export component Input inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <bool> show-clear-btn: true;
+    in property <InputType> input-type: InputType.text;
+    in property <bool> enabled: true;
+    out property <bool> has-focus: ui-input.has-focus;
+    // Kept for source compatibility; UI2 delegates the keyboard action label.
+    in property <string> accept-button-text;
+    callback accepted(string);
+    callback edited(string);
+    height: Theme.control-size-md;
+
+    ui-input := UiInput {
+        width: parent.width;
+        height: parent.height;
+        value <=> root.text;
+        placeholder: root.placeholder;
+        input-type: root.input-type;
+        disabled: !root.enabled;
+        clearable: root.show-clear-btn;
+        variant: InputVariant.outlined;
+        size: ControlSize.md;
+        changed(value) => { root.edited(value); }
+        submitted(value) => { root.accepted(value); }
+    }
+}
+
+export component TitledInput inherits VerticalLayout {
+    in property <string> title;
+    in property <string> placeholder;
+    in-out property <string> text;
+    in property <bool> has-error: false;
+    in property <bool> has-notice: false;
+    in property <bool> has-disabled: false;
+    in property <string> message;
+    in property <bool> enabled: true;
+    in property <bool> show-clear-btn: true;
+    in property <CapsMode> caps-mode: none;
+    in property <InputType> input-type: InputType.text;
+    in property <bool> bounded-number: false;
+    in property <string> minimum: "";
+    in property <string> maximum: "";
+    in property <bool> show-password: false;
+    in property <bool> filter-special-characters: false;
+    in property <string> special-chars-removed-label;
+    in property <bool> locked: false;
+    in property <string> accept-button-text;
+    in property <bool> accept-button-enabled: !has-error && !has-notice;
+    in property <bool> check-character-limit: true;
+    in property <int> character-limit: 100;
+    out property <bool> has-focus: input.has-focus;
+    callback edited(string);
+    callback accepted(string);
+    spacing: Size.sz2;
+    TextSm { text: root.title; color: Palette.content-tertiary; }
+    input := Input {
+        text <=> root.text;
+        placeholder: root.placeholder;
+        enabled: root.enabled;
+        show-clear-btn: root.show-clear-btn;
+        input-type: root.input-type;
+        accept-button-text: root.accept-button-text;
+        edited(value) => {
+            root.text = value;
+            root.edited(root.text);
+        }
+        accepted(value) => { root.accepted(value); }
+    }
+}
+
+export component Panel inherits Rectangle {
+    border-color: Theme.palette-border;
+    border-width: Theme.border-width-sm;
+    border-radius: Theme.radius-lg;
+    background: Theme.palette-surface;
+    clip: true;
+    @children
+}
+
+export component Modal inherits Rectangle {
+    in property <string> icon: "info";
+    in property <brush> icon-color: Theme.palette-primary;
+    in property <string> title;
+    in property <string> text;
+    background: Theme.palette-background.with-alpha(0.90);
+    TouchArea { }
+    Panel {
+        width: UISize.modal-width; height: Theme.control-size-lg * 7 + Theme.spacing-lg + Theme.spacing-sm;
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+        VerticalLayout {
+            padding: Theme.spacing-xl; spacing: Theme.spacing-xl;
+            HeadingMd { text: root.title; horizontal-alignment: center; }
+            TextSm { text: root.text; color: Theme.palette-muted; horizontal-alignment: center; }
+            Rectangle { vertical-stretch: 1; }
+            @children
+        }
+    }
+}
+
+export component OverlayMenu inherits Rectangle {
+    callback touched-off();
+    background: Theme.palette-background.with-alpha(0.90);
+    TouchArea { width: parent.width; height: parent.height; clicked => { root.touched-off(); } }
+    Rectangle {
+        width: Theme.control-size-lg * 5;
+        height: Theme.control-size-lg * 5 + Theme.control-size-sm - Theme.spacing-sm;
+        x: parent.width - self.width - Theme.spacing-xl;
+        y: UISize.control-center-status-bar-height + Theme.control-size-md;
+        border-radius: Theme.radius-lg;
+        background: Theme.palette-surface;
+        clip: true;
+        VerticalLayout { @children }
+    }
+}
+
+export component PopupMenuItem inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <string> left-icon;
+    in property <bool> left-icon-reserve;
+    in property <color> text_color: Palette.content-primary;
+    in property <bool> enabled: true;
+    in property <bool> first: false;
+    in property <bool> last: false;
+    in property <bool> divider: !last;
+    callback clicked;
+    height: Size.sz16;
+    HorizontalLayout {
+        padding: Size.sz4;
+        spacing: Size.sz4;
+        if root.left-icon != "": Icon { name: root.left-icon; color: root.text_color; }
+        TextMd { text: root.label; color: root.enabled ? root.text_color : Palette.content-tertiary; vertical-alignment: center; horizontal-stretch: 1; }
+        if root.icon != "": Icon { name: root.icon; color: root.enabled ? root.text_color : Palette.content-tertiary; }
+    }
+    touch := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+    if root.divider: Rectangle { y: parent.height - 1px; height: 1px; background: Palette.border-tertiary; }
+}
+
+export component ShieldPage inherits BasePage {
+    VerticalLayout {
+        padding-left: Theme.spacing-xl; padding-right: Theme.spacing-xl;
+        padding-top: Theme.spacing-xl; padding-bottom: Theme.spacing-xl;
+        @children
+    }
+}
+export component JumboIcon inherits Rectangle {
+    in property <string> name: "jumbo-circle";
+    width: IconSize.px184; height: IconSize.px184;
+    border-radius: self.width / 2; background: Theme.palette-card;
+    VerticalLayout { alignment: center; HorizontalLayout { alignment: center; @children } }
+}
+
+export component TimerLoader inherits Rectangle {
+    in property <bool> running: true;
+    in property <length> size: Theme.icon-size-md;
+    in property <color> loader-color: Theme.palette-muted;
+    in property <color> active-color: Theme.palette-foreground;
+    width: size; height: size;
+    if root.running: UiSpinner {
+        width: parent.width;
+        height: parent.height;
+        spinner-size: root.size;
+        track-color: root.loader-color;
+        accent-color-override: root.active-color;
+    }
+}
+
+export component TimerCircularProgress inherits Rectangle {
+    in property <bool> running: true;
+    in property <float> percent;
+    in property <float> angle-start: 0;
+    in property <length> size: IconSize.px184;
+    in property <length> stroke-width: Size.sz3;
+    in property <color> back-color: Palette.border-tertiary;
+    in property <color> front-color: Palette.content-brand;
+    in property <bool> indeterminate;
+    in property <duration> interval: 100ms;
+    width: root.size;
+    height: root.size;
+    border-radius: root.size / 2;
+    border-width: root.stroke-width;
+    border-color: root.indeterminate ? root.front-color : root.back-color;
+    if root.running && root.indeterminate: UiSpinner {
+        width: parent.width;
+        height: parent.height;
+        spinner-size: root.size;
+        track-color: root.back-color;
+        accent-color-override: root.front-color;
+    }
+    @children
+}
+
+export component BtcAddress inherits VerticalLayout {
+    in property <string> address;
+    in property <FontSize> font-size: FontSize.sm;
+    in property <bool> bold: false;
+    in property <color> primary-color: Palette.content-primary;
+    in property <color> secondary-color: Palette.content-tertiary;
+    in property <int> items-per-row: 8;
+    in property <length> section-spacing: Size.sz1;
+    Text {
+        text: root.address;
+        color: root.primary-color;
+        font-family: Theme.font-primary;
+        font-size: root.font-size == FontSize.lg ? Theme.font-size-lg
+            : root.font-size == FontSize.md ? Theme.font-size-md
+            : root.font-size == FontSize.xs ? Theme.font-size-xs
+            : Theme.font-size-sm;
+        font-weight: root.bold ? Theme.font-weight-semibold : Theme.font-weight-normal;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        wrap: word-wrap;
+    }
+}
+
+export component Qrcode inherits Rectangle {
+    in property <string> data;
+    Image { source: Utils.qrcode(root.data, Palette.black, Palette.white); width: parent.width; height: parent.height; image-rendering: pixelated; image-fit: contain; }
+}
+
+export component AnimatedQrCode inherits Rectangle {
+    in property <[string]> parts;
+    in property <duration> interval: 250ms;
+    in property <bool> animate: true;
+    private property <int> index: 0;
+    width: UISize.screen-width - Theme.control-size-lg * 2;
+    height: self.width;
+    Qrcode { width: parent.width; height: parent.height; data: root.parts.length > 0 ? root.parts[root.index] : ""; }
+    Timer { interval: root.interval; running: root.animate && root.parts.length > 1; triggered() => { root.index = root.parts.length > 0 ? Math.mod(root.index + 1, root.parts.length) : 0; } }
+}
+
+enum QrDensity { low, medium, high }
+export component DynamicQrCode inherits Rectangle {
+    out property <QrDensity> density: QrDensity.medium;
+    property <[string]> parts: get-parts(density == QrDensity.low ? 250 : density == QrDensity.medium ? 500 : 1000);
+    private property <int> index: 0;
+    pure callback get-parts(int) -> [string];
+    width: UISize.screen-width - Theme.control-size-md * 2;
+    height: self.width + Theme.spacing-xl;
+    Qrcode { width: parent.width; height: parent.width; data: root.parts.length > 0 ? root.parts[root.index] : ""; }
+    Timer { interval: 250ms; running: root.parts.length > 1; triggered() => { root.index = root.parts.length > 0 ? Math.mod(root.index + 1, root.parts.length) : 0; } }
+}

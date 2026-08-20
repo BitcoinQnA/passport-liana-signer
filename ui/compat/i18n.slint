@@ -1,0 +1,8 @@
+export global TR {
+    pure callback lookup(string) -> string;
+    pure callback format(string, [string]) -> string;
+    pure callback int(int) -> string;
+    pure callback float(float, int) -> string;
+    lookup(id) => { id }
+    format(id, _args) => { id }
+}

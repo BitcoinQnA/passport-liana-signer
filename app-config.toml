@@ -7,18 +7,33 @@ launcher-app-name = "Liana"
 description = "Policy-aware Liana Miniscript signer for Passport Prime"
 icon = "resources/icon.svg"
 app-id = "0x6c69616e612d7369676e65722d617070"
-version = "0.2.0"
+version = "0.3.0"
 min-keyos-version = "1.4.0"
-signing-identity = "passport-prime-dev"
+theme = "resources/theme.json"
 
 [publisher]
 name = "Foundation Devices"
 contact-email = "hello@foundation.xyz"
 support-url = "https://foundation.xyz"
 
+# Launcher scanner handoff. Independently signed applications cannot open the
+# privileged system scanner directly; KeyOS routes matching scans to this app.
+[[qr-match-rules]]
+id = "liana-psbt"
+priority = 5
+id-localizations = { en = "Liana transaction" }
+sub-rules = { ur = { UR = { ur-type = "crypto-psbt" } } }
+
+[[qr-match-rules]]
+id = "liana-data"
+priority = 5
+id-localizations = { en = "Liana wallet data" }
+sub-rules = { ur = { UR = { ur-type = "bytes" } } }
+
 [permissions]
-template = ["gui-app", "fs-generic"]
+template = ["gui-app", "fs-generic", "navigable"]
 "os/security" = ["GetAppSeed"]
+"os/settings" = ["GetDeviceName", "GetLocale", "GetPrimeColor"]
 "os/fs" = [
     "GetAirlockReadAccess",
     "GetAirlockWriteAccess",

@@ -3,10 +3,13 @@
 
 [package]
 name = "gui-app-liana-signer"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Foundation Devices, Inc. <hello@foundation.xyz>"]
 license = "GPL-3.0-or-later"
+
+[workspace]
+exclude = [".foundation-sdk"]
 
 [features]
 # Host-only deterministic app seed for simulator development. Keep disabled for
@@ -17,22 +20,25 @@ dev-seed = []
 sim-bridge = []
 
 [dependencies]
-# KeyOS plumbing
-fs = { workspace = true }
-log = { workspace = true }
-log-server = { workspace = true }
-ngwallet = { workspace = true }
-security = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-server = { workspace = true }
-slint-keyos-platform = { path = "../../slint-keyos-platform/runtime" }
+# The Foundation CLI creates this project-local SDK mapping automatically.
+# No KeyOS source checkout is required.
+fs = { path = ".foundation-sdk/current/lib/keyos/api/fs" }
+security = { path = ".foundation-sdk/current/lib/keyos/api/security" }
+settings = { path = ".foundation-sdk/current/lib/keyos/api/settings" }
+server = { path = ".foundation-sdk/current/lib/keyos/server" }
+slint-keyos-platform = { path = ".foundation-sdk/current/lib/keyos/slint-keyos-platform/runtime" }
+foundation-themes = { path = ".foundation-sdk/current/lib/keyos/sdk/crates/foundation-themes" }
+log = "0.4"
+log-server = { package = "xous-api-log", path = ".foundation-sdk/current/lib/keyos/xous/api/log" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ngwallet = { git = "https://github.com/Foundation-Devices/ngwallet", tag = "3.8.0", features = ["rkyv", "sha2"] }
 
 # Cross-target utilities
 anyhow = "1"
 base64 = "0.22"
 hex = "0.4"
-foundation-urtypes = { workspace = true }
+foundation-urtypes = { git = "https://github.com/Foundation-Devices/foundation-rs.git", tag = "0.6.1" }
 minicbor = { version = "0.24", features = ["std", "derive"] }
 
 # Descriptor/policy/PSBT/signing logic lives in src/liana/, built on ngwallet's
@@ -41,7 +47,30 @@ minicbor = { version = "0.24", features = ["std", "derive"] }
 # `liana-signer-core` reference crate.
 
 [build-dependencies]
-slint-keyos-platform-build = { path = "../../slint-keyos-platform/build", default-features = false }
+slint-keyos-platform-build = { path = ".foundation-sdk/current/lib/keyos/slint-keyos-platform/build", default-features = false }
+
+[patch.crates-io]
+getrandom = { path = ".foundation-sdk/current/lib/keyos/imports/getrandom" }
+# UI2's theme crate permits a broad crates.io Slint range. Keep every Slint
+# crate on the Foundation fork shipped with the KeyOS 1.4 SDK so a second ABI
+# cannot enter the device build.
+slint = { git = "https://github.com/Foundation-Devices/slint.git", tag = "v1.17.0-foundation2" }
+slint-build = { git = "https://github.com/Foundation-Devices/slint.git", tag = "v1.17.0-foundation2" }
+slint-macros = { git = "https://github.com/Foundation-Devices/slint.git", tag = "v1.17.0-foundation2" }
+i-slint-common = { git = "https://github.com/Foundation-Devices/slint.git", tag = "v1.17.0-foundation2" }
+i-slint-compiler = { git = "https://github.com/Foundation-Devices/slint.git", tag = "v1.17.0-foundation2" }
+i-slint-core = { git = "https://github.com/Foundation-Devices/slint.git", tag = "v1.17.0-foundation2" }
+i-slint-core-macros = { git = "https://github.com/Foundation-Devices/slint.git", tag = "v1.17.0-foundation2" }
+i-slint-backend-selector = { git = "https://github.com/Foundation-Devices/slint.git", tag = "v1.17.0-foundation2" }
+i-slint-renderer-software = { git = "https://github.com/Foundation-Devices/slint.git", tag = "v1.17.0-foundation2" }
+const-field-offset = { git = "https://github.com/Foundation-Devices/slint.git", tag = "v1.17.0-foundation2" }
+const-field-offset-macro = { git = "https://github.com/Foundation-Devices/slint.git", tag = "v1.17.0-foundation2" }
+
+[profile.dev]
+opt-level = 2
+
+[profile.dev.package."*"]
+opt-level = 3
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(keyos)'] }

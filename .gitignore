@@ -1,5 +1,13 @@
 /target
+/.foundation-sdk
 **/*.rs.bk
 .DS_Store
 *.psbt
 .codex/
+/manifest.toml
+/ui/ui
+/ui/gen/navigate.slint
+/ui/gen/tr.slint
+/resources/fonts
+/resources/icons
+/resources/images

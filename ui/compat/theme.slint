@@ -1,0 +1,86 @@
+// Compatibility names for the former in-tree UI surface. Values are aliases
+// or derivations of Foundation UI2 theme tokens; no independent font or pixel
+// scale lives here.
+import { Theme, Images, UISize as FoundationUISize } from "@ui/theme.slint";
+export { Theme, Images }
+
+export enum Importance { primary, secondary, tertiary, notice, normal, white, negative }
+export enum FontSize { xs, sm, md, lg }
+
+export global Size {
+    out property <length> zero: 0px;
+    out property <length> sz0_25: 1px;
+    out property <length> sz0_5: 2px;
+    out property <length> sz0_75: 3px;
+    out property <length> sz1: Theme.spacing-xs;
+    out property <length> sz2: Theme.spacing-sm;
+    out property <length> sz3: Theme.spacing-md;
+    out property <length> sz4: Theme.spacing-lg;
+    out property <length> sz5: Theme.spacing-lg + Theme.spacing-xs;
+    out property <length> sz6: Theme.spacing-xl;
+    out property <length> sz7: Theme.spacing-xl + Theme.spacing-xs;
+    out property <length> sz8: Theme.spacing-xl + Theme.spacing-sm;
+    out property <length> sz9: Theme.spacing-xl + Theme.spacing-md;
+    out property <length> sz10: Theme.control-size-sm - Theme.spacing-sm;
+    out property <length> sz11: Theme.control-size-sm - Theme.spacing-xs;
+    out property <length> sz12: Theme.control-size-sm;
+    out property <length> sz13: Theme.control-size-md - Theme.spacing-xs;
+    out property <length> sz14: Theme.control-size-md;
+    out property <length> sz15: Theme.control-size-lg - Theme.spacing-xs;
+    out property <length> sz16: Theme.control-size-lg;
+}
+
+export global IconSize {
+    out property <length> px16: Theme.icon-size-sm - Theme.spacing-xs;
+    out property <length> px24: Theme.icon-size-md;
+    out property <length> px32: Theme.choice-control-size-lg;
+    out property <length> px48: Theme.control-size-sm;
+    out property <length> px64: Theme.control-size-lg;
+    out property <length> px96: Theme.control-size-lg + Theme.choice-control-size-lg;
+    out property <length> px184: Theme.control-size-lg * 3 - Theme.spacing-sm;
+}
+
+export global UISize {
+    out property <length> screen-width: FoundationUISize.screen-width;
+    out property <length> screen-height: FoundationUISize.screen-height;
+    out property <length> control-center-status-bar-height: FoundationUISize.control-center-status-bar-height;
+    out property <length> app-window-height: FoundationUISize.app-window-height;
+    out property <length> modal-width: FoundationUISize.screen-width - Theme.spacing-xl * 2;
+}
+
+export global Palette {
+    out property <brush> content-primary: Theme.palette-foreground;
+    out property <brush> content-secondary: Theme.palette-muted;
+    out property <brush> content-tertiary: Theme.palette-muted;
+    out property <brush> content-disabled: Theme.palette-muted.with-alpha(0.65);
+    out property <brush> content-brand: Theme.palette-primary;
+    out property <brush> content-negative: Theme.palette-danger;
+    out property <brush> content-positive: Theme.color-success;
+    out property <brush> background-primary: Theme.palette-background;
+    out property <brush> background-primary-alternative: Theme.palette-card;
+    out property <brush> background-disabled: Theme.palette-secondary;
+    out property <brush> background-brand: Theme.palette-primary;
+    out property <brush> background-negative: Theme.palette-danger.with-alpha(0.32);
+    out property <brush> border-primary: Theme.palette-border;
+    out property <brush> border-secondary: Theme.palette-border;
+    out property <brush> border-tertiary: Theme.palette-border;
+    out property <brush> border-focus: Theme.palette-primary;
+    out property <brush> overlay: Theme.palette-background.with-alpha(0.90);
+    // QR modules require absolute black/white for scanner contrast.
+    out property <brush> black: #000000;
+    out property <brush> white: Theme.color-white;
+    out property <brush> transparent: Theme.color-transparent;
+}
+
+export global Timings {
+    out property <duration> prop-change: 350ms;
+}
+
+export global CurrentTheme {
+    out property <bool> is-dark: Theme.is-dark;
+    out property <bool> is-light: !Theme.is-dark;
+}
+
+export global Utils {
+    pure callback qrcode(string, color, color) -> image;
+}

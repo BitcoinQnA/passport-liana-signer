@@ -1,83 +1,133 @@
-# Liana Signer SDK Setup
+# Foundation SDK setup
 
 ## Supported baseline
 
-This project targets Foundation SDK 0.4.0 and KeyOS v1.4.0 or newer. The SDK installer verifies signed archives and selects the installed release through `~/.foundation/sdk/current`.
+Liana Signer targets Foundation SDK 1.0 and KeyOS 1.4.0 or newer. It is an
+independent third-party app and does not need a KeyOS source checkout, workspace
+registration, launcher allowlist change, or full firmware build.
+
+Install the current SDK on Apple Silicon macOS or Linux x86_64:
 
 ```bash
 curl -fsSL https://foundation.xyz/sdk/install.sh | sh
 foundation doctor
+foundation --version
 ```
 
-The app keeps its stable 16-byte app ID in `app-config.toml`, so version 0.2.0 upgrades the existing installation and retains app-scoped seed and policy storage identity.
+The installer verifies the SDK release and manages it under
+`~/.foundation/sdk/`. Run SDK commands from the repository root.
 
-## Build in KeyOS
+## Publisher certificate
 
-Place this repository at `apps/gui-app-liana-signer/`, add it to the root workspace members, then run from the KeyOS root:
+Every installable app is signed. Generate a personal or organizational
+development identity once:
 
 ```bash
-cargo test -p gui-app-liana-signer
-nix develop .#build --command cargo xtask check gui-app-liana-signer
+foundation cert gen liana-signer-local \
+  --publisher-name "Your Name" \
+  --contact-email "you@example.com" \
+  --support-url "https://example.com"
 ```
 
-The `xtask check` command validates both `armv7a-unknown-xous-elf` and the hosted simulator. Taproot remains intentionally disabled; use a P2WSH Liana policy on Signet or mainnet.
+Signing material is stored under `~/.foundation/signing/`, outside this
+repository. Back it up securely and never commit the private key. If several
+identities exist, the SDK prompts for one in an interactive terminal. Automated
+builds should explicitly configure their own identity outside the public source
+tree.
 
-## Signed bundle
-
-KeyOS v1.4.0 requires a newer Rust toolchain than the one bundled with SDK 0.4.0. Build the app with the v1.4.0 workspace toolchain and sign it with the development identity created by the SDK:
+A Prime must trust a self-signed publisher before it installs that publisher's
+apps. On an unlocked KeyOS 1.4 beta device, enable USB debug, connect the Prime,
+inspect the fingerprint, and approve it on the device:
 
 ```bash
-nix develop .#build --command cargo xtask build-app gui-app-liana-signer \
-  --cosign2 ~/.foundation/signing/passport-prime-dev/cosign2.toml \
-  --archive
+foundation cert fingerprint liana-signer-local
+foundation cert install liana-signer-local
 ```
 
-The command validates the manifest and permissions, builds the hardware ELF, writes a signed manifest with file hashes, and stages both the USB-debug bundle and `.app` archive under `target/armv7a-unknown-xous-elf/release/app-bundles/`.
+Certificate installation is a one-time development step for that device and
+publisher. It is separate from app installation.
 
-The configured development signing identity is `passport-prime-dev`. Change `signing-identity` deliberately when producing a release under another publisher; never commit a private key.
+## Build an installable app
 
-## Sideload to Prime
-
-Unlock Passport Prime, enable Developer Mode and USB app sideload/storage, then connect it over USB. Confirm both the `PRIME` mount and USB serial endpoint are present before running:
+From a clean clone:
 
 ```bash
-nix develop .#build --command cargo build -p passport-drive --release
-target/release/passport-drive load_app \
-  target/armv7a-unknown-xous-elf/release/app-bundles/6c69616e612d7369676e65722d617070
+foundation pack --release
 ```
 
-This installs the app bundle and launches it over USB debug. It does not replace the full KeyOS firmware image. Install or flash the desired KeyOS release through Foundation's firmware workflow first, then sideload the app built against that release.
+This command prepares the project-local SDK mapping, validates
+`app-config.toml`, compiles the ARM application, signs its manifest, and writes:
 
-## Development firmware
+```text
+target/keyos/gui-app-liana-signer.app
+```
 
-To include Liana Signer in a complete local KeyOS development image:
+Copy the `.app` file to a USB drive or Airlock. On Passport, open
+**Settings > Apps** and install it. Installing the archive does not require
+Developer Mode or USB debug once the publisher is trusted.
 
-1. Add it to the root workspace and `DEFAULT_APPS_NORMAL`.
-2. Add app ID `0x6c69616e612d7369676e65722d617070` to the launcher's `KNOWN_APPS` list and add `main.liana` to each launcher locale. KeyOS 1.4 hides non-removable built-in apps that are not allowlisted.
-3. Generate the ignored local firmware key once, then build and flash from the KeyOS root:
+For an iterative USB workflow, leave the unlocked device connected with USB
+debug enabled and run:
 
 ```bash
-scripts/generate-cosign2-dev-key.sh
-nix develop .#build --command cargo xtask build-all
-nix develop .#build --command cargo xtask flash
+foundation sideload --release
 ```
 
-The resulting firmware is signed with the ignored local development key and has USB debug enabled. It is suitable for a Prime development unit, not for public release or production devices. Production firmware must be built and signed through Foundation's release infrastructure.
+Use `--no-run` to upload without launching. This installs only the application;
+it does not flash or replace KeyOS.
 
-The SDK-standard `resources/icon.svg` is staged automatically for both built-in and sideloaded bundles. Do not add a separate launcher icon implementation.
-
-## Permission constraint
-
-Public SDK apps may use file-level `Flush` and `CloseFile`, but not filesystem-wide `FlushFs`, which is Foundation-only in current KeyOS. Keep the export order as write, file flush, close file, close directory. Adding `FileSystem::flush` will either fail SDK permission validation or be denied on a third-party-signed device.
-
-## Simulator and Liana
-
-For deterministic local Signet testing, configure the hosted app build with the `dev-seed` and `sim-bridge` features, then follow `SIGNET-TEST.md` and launch the workspace simulator:
+## Build and test commands
 
 ```bash
-cargo xtask run --hosted
+foundation build --release   # signed device bundle
+foundation pack --release    # signed single-file .app archive
+foundation sim               # hosted Passport simulator
+cargo test                   # host tests after SDK project preparation
 ```
 
-Build the Liana wallet with the simulator's exported account. The signer correctly refuses policies whose complete xpub does not match its app seed.
+The SDK generates local compatibility paths during the first build:
+
+- `.foundation-sdk/current/`
+- `ui/ui`
+- `resources/fonts`, `resources/icons`, and `resources/images`
+- `manifest.toml`
+
+These are ignored intentionally. Do not commit them or replace SDK paths with
+paths to a local KeyOS checkout. `app-config.toml` is the manifest source of
+truth.
+
+## Public SDK boundaries
+
+- The app requests `GetAppSeed`, never `GetSeed`. It receives only deterministic
+  entropy scoped to this app ID and cannot access Passport's master seed.
+- Independently signed apps cannot open the privileged scanner directly. The
+  launcher scans QR codes and routes matching `crypto-psbt` and `bytes` payloads
+  into the app using the navigation handoff declared in `app-config.toml`.
+- File exchange uses public USB, Airlock, and User storage grants.
+- Exports call file-level `Flush` before `CloseFile`. Do not add
+  `FileSystem::flush`; the filesystem-wide `FlushFs` permission is reserved for
+  Foundation apps.
+- The signing checks in `src/liana/signing.rs` are a security boundary. Never
+  bypass policy matching, active-path detection, ownership, or timelock checks.
+
+## File fallback
+
+QR is the normal Liana workflow. The app also looks in a `liana/` directory and
+at the storage root for these interoperability files:
+
+| File | Direction | Purpose |
+|---|---|---|
+| `import.txt`, `wallet-policy.json`, `wallet-policy.txt` | Liana to Passport | Wallet policy |
+| `verify-address.txt`, `address-request.json` | Liana to Passport | Address verification request |
+| `unsigned.psbt` | Liana to Passport | Unsigned PSBT |
+| `passport-key.txt` | Passport to Liana | Passport public key |
+| `signed.psbt` | Passport to Liana | Signed PSBT |
+
+When testing removable FAT media on macOS, prevent Spotlight indexing on the
+card to avoid misleading filesystem failures:
+
+```bash
+touch /Volumes/NAME/.metadata_never_index
+```
 <!-- SPDX-FileCopyrightText: 2026 Foundation Devices, Inc. <hello@foundation.xyz> -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->

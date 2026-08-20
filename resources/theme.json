@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "id": "app_theme",
+  "name": "Liana Signer",
+  "parent": "base_theme",
+  "tokens": {
+    "colors": {
+      "light": {
+        "primary": "#00F5A0",
+        "primary-pressed": "#00D98D",
+        "secondary": "#1B4338",
+        "danger": "#FF6B5E",
+        "surface": "#20272B",
+        "background": "#121719",
+        "text": "#F5F8F7",
+        "text-muted": "#A9B6B1",
+        "transparent": "#00000000"
+      },
+      "dark": {
+        "primary": "#00F5A0",
+        "primary-pressed": "#00D98D",
+        "secondary": "#1B4338",
+        "danger": "#FF6B5E",
+        "surface": "#20272B",
+        "background": "#121719",
+        "text": "#F5F8F7",
+        "text-muted": "#A9B6B1",
+        "transparent": "#00000000"
+      }
+    }
+  }
+}

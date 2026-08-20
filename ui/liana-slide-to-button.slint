@@ -3,10 +3,10 @@
 
 // Liana-green variant of the shared SlideToButton (same geometry + gesture as
 // the Bitcoin app's slide-to-sign; only the thumb/label colors are Liana).
-import { Size, Images, CurrentTheme } from "@ui/theme.slint";
-import { Icon } from "@ui/widgets/icon.slint";
-import { TextMd } from "@ui/widgets/txt.slint";
-import { TimerLoader } from "@ui/widgets/loader.slint";
+import { Size } from "compat/theme.slint";
+import { Icon } from "compat/widgets.slint";
+import { TextMd } from "compat/widgets.slint";
+import { TimerLoader } from "compat/widgets.slint";
 import { Liana } from "./liana-theme.slint";
 
 export component LianaSlideToButton inherits Rectangle {
@@ -28,11 +28,14 @@ export component LianaSlideToButton inherits Rectangle {
 
     callback activated(string);
 
-    // Nine-slice track background (neutral; reused from the shared widget).
-    Image {
+    // Neutral track, expressed with UI2-compatible vector primitives.
+    Rectangle {
         width: 100%;
         height: 100%;
-        source: CurrentTheme.is-dark ? Images.nine-slice("images/slide-to-bg-dark") : Images.nine-slice("images/slide-to-bg-light");
+        background: Liana.surface-change;
+        border-color: Liana.green-dark;
+        border-width: 1px;
+        border-radius: self.height / 2;
 
         HorizontalLayout {
             alignment: center;
@@ -53,11 +56,13 @@ export component LianaSlideToButton inherits Rectangle {
     }
 
     // Target outline at the end of the track.
-    target := Image {
+    target := Rectangle {
         x: parent.width - self.width - Size.sz1;
         width: thumb.width;
         height: inner-height;
-        source: CurrentTheme.is-dark ? Images.nine-slice("images/slide-to-target-dark") : Images.nine-slice("images/slide-to-target-light");
+        border-color: Liana.green;
+        border-width: 2px;
+        border-radius: self.height / 2;
         opacity: has-activated ? 0 : 1;
     }
 
